@@ -2,7 +2,6 @@
 
 Edraak is a hackathon prototype for an agentic AI CFO: a "financial seatbelt" that helps people test large financial commitments before they make them. It currently focuses on decisions such as car financing, housing commitments, wedding costs, travel, debt payoff, and emergency financing.
 
-The project is intentionally safe for demos. The current application uses synthetic profiles, synthetic transactions, and readable mock agent logic. It does not connect to real banking data, Gemini, Vertex AI, ADK orchestration, or live BigQuery tables yet, but the codebase is structured so those integrations can be added later.
 
 ## What Is In This Repository
 
@@ -145,15 +144,3 @@ BQ_TRANSACTIONS_TABLE=
 BQ_RECOMMENDATIONS_TABLE=
 VITE_API_BASE_URL=
 ```
-
-## Current Status
-
-Edraak is a prototype, not a production financial advisor. The current version is best used to demonstrate the decision flow, agent experience, Google Cloud architecture, and integration plan. Production readiness would require real data pipelines, authentication, authorization, privacy controls, auditable recommendations, tested ADK/Gemini orchestration, robust error handling, and formal financial compliance review.
-
-## Next Integration Points
-
-- Replace mock profiles and transactions with BigQuery reads in `app/functions/bigquery_data.py`.
-- Persist decision requests and recommendations to BigQuery.
-- Replace the mock root orchestration in `app/agents/root_agent.py` with real ADK agent orchestration.
-- Enable Gemini or Vertex AI for generated explanations and recommendation review.
-- Add authentication before connecting any real user or financial data.
