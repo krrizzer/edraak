@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from app.agents.root_agent import run_edraak_agent
 from app.functions.mock_data import get_profile_by_id, get_profiles, get_transactions_by_user
 
-
+#ss
 class DecisionInput(BaseModel):
     user_id: str
     goal_type: str = Field(..., examples=["car"])
