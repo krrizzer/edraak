@@ -1,13 +1,16 @@
 def analyze_profile(profile):
-    obligation_ratio = round((profile["monthly_obligations"] / profile["monthly_income"]) * 100)
-    savings_months = round(profile["savings"] / max(profile["monthly_obligations"], 1), 1)
+    obligation_ratio = profile["obligation_ratio"]
+    savings_months = round(
+        profile["savings_estimate"] / max(profile["recurring_obligations"], 1),
+        1,
+    )
 
-    if obligation_ratio < 30:
-        obligation_status = "منخفضة"
-    elif obligation_ratio < 50:
-        obligation_status = "متوسطة"
+    if profile["salary"] >= 20000:
+        income_status = "قوي"
+    elif profile["salary"] >= 14000:
+        income_status = "متوسط"
     else:
-        obligation_status = "مرتفعة"
+        income_status = "محدود"
 
     if savings_months >= 6:
         savings_status = "قوية"
@@ -16,12 +19,19 @@ def analyze_profile(profile):
     else:
         savings_status = "محدودة"
 
+    if obligation_ratio >= 55:
+        obligations_status = "مرتفعة"
+    elif obligation_ratio >= 35:
+        obligations_status = "متوسطة"
+    else:
+        obligations_status = "منخفضة"
+
     return {
-        "summary": profile["behavior_summary_ar"],
-        "obligation_status": obligation_status,
+        "income_status": income_status,
         "savings_status": savings_status,
+        "obligations_status": obligations_status,
         "message_ar": (
-            f"نسبة الالتزامات الحالية {obligation_ratio}%، "
-            f"والمدخرات تغطي نحو {savings_months} شهر من الالتزامات."
+            f"تم بناء الملف المالي من بيانات البنك. الدخل {income_status}، "
+            f"المدخرات {savings_status}، ونسبة الالتزامات الحالية {obligation_ratio}%."
         ),
     }

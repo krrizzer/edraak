@@ -8,20 +8,34 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.agents.root_agent import run_edraak_agent
-from app.functions.mock_data import get_profile_by_id, get_profiles, get_transactions_by_user
+from app.functions.bigquery_data import (
+    get_customer_by_id_from_bigquery,
+    get_customer_by_username_from_bigquery,
+    get_loans_from_bigquery,
+    get_transactions_from_bigquery,
+    get_user_profile_from_bigquery,
+    save_decision_request_to_bigquery,
+    save_recommendation_to_bigquery,
+)
+from app.functions.load_user_profiles import build_user_profile, load_all_user_profiles
+from app.functions.mock_data import save_user_profile
 
-#ss
+
+class LoginInput(BaseModel):
+    username: str = Field(..., min_length=1, examples=["fahad"])
+
+
 class DecisionInput(BaseModel):
-    user_id: str
+    customer_id: str
     goal_type: str = Field(..., examples=["car"])
     goal_amount: float = Field(..., gt=0)
-    monthly_installment: float = Field(..., ge=0)
+    monthly_installment: float = Field(..., gt=0)
     duration_months: int = Field(..., gt=0)
     down_payment: float = Field(0, ge=0)
     urgency: Literal["low", "medium", "high"] = "medium"
 
 
-app = FastAPI(title="Edraak API", version="0.1.0")
+app = FastAPI(title="Edraak API", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,26 +56,85 @@ def health():
     return {"status": "ok", "service": "edraak"}
 
 
-@app.get("/api/profiles")
-def profiles():
-    return get_profiles()
+@app.post("/api/login")
+def login(login_input: LoginInput):
+    customer = get_customer_by_username_from_bigquery(login_input.username)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Username not found")
+    return {
+        "customer_id": customer["customer_id"],
+        "username_en": customer["username_en"],
+        "ar_name": customer["ar_name"],
+        "en_name": customer["en_name"],
+    }
 
 
-@app.get("/api/transactions/{user_id}")
-def transactions(user_id: str):
-    if not get_profile_by_id(user_id):
-        raise HTTPException(status_code=404, detail="Profile not found")
-    return get_transactions_by_user(user_id)
+@app.post("/api/admin/load-user-profiles")
+def load_user_profiles():
+    profiles = load_all_user_profiles()
+    return {"status": "completed", "profiles_loaded": len(profiles)}
+
+
+@app.get("/api/customer/{customer_id}")
+def get_customer(customer_id: str):
+    customer = get_customer_by_id_from_bigquery(customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return customer
+
+
+@app.get("/api/customer/{customer_id}/transactions")
+def get_customer_transactions(customer_id: str):
+    if not get_customer_by_id_from_bigquery(customer_id):
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return get_transactions_from_bigquery(customer_id)
+
+
+@app.get("/api/customer/{customer_id}/loans")
+def get_customer_loans(customer_id: str):
+    if not get_customer_by_id_from_bigquery(customer_id):
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return get_loans_from_bigquery(customer_id)
+
+
+@app.get("/api/customer/{customer_id}/profile")
+def get_customer_profile(customer_id: str):
+    customer = get_customer_by_id_from_bigquery(customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    profile = get_user_profile_from_bigquery(customer_id)
+    if profile:
+        return profile
+
+    transactions = get_transactions_from_bigquery(customer_id)
+    loans = get_loans_from_bigquery(customer_id)
+    profile = build_user_profile(customer, transactions, loans)
+    save_user_profile(profile)
+    return profile
 
 
 @app.post("/api/analyze")
 def analyze(decision_input: DecisionInput):
-    profile = get_profile_by_id(decision_input.user_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
+    decision = decision_input.model_dump()
 
-    transactions_for_user = get_transactions_by_user(decision_input.user_id)
-    return run_edraak_agent(profile, transactions_for_user, decision_input.model_dump())
+    # Data collection happens before any agent runs.
+    customer = get_customer_by_id_from_bigquery(decision_input.customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    transactions = get_transactions_from_bigquery(decision_input.customer_id)
+    loans = get_loans_from_bigquery(decision_input.customer_id)
+    profile = get_user_profile_from_bigquery(decision_input.customer_id)
+    if not profile:
+        profile = build_user_profile(customer, transactions, loans)
+        save_user_profile(profile)
+
+    save_decision_request_to_bigquery(decision)
+
+    result = run_edraak_agent(customer, transactions, loans, profile, decision)
+    save_recommendation_to_bigquery(result)
+    return result
 
 
 @app.get("/{path:path}")

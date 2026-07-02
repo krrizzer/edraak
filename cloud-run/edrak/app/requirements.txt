@@ -4,4 +4,3 @@ pydantic
 python-dotenv
 google-cloud-bigquery
 google-cloud-logging
-google-adk
