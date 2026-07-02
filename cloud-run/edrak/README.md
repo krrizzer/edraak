@@ -1,49 +1,85 @@
-# Edraak
+# Edraak Cloud Run App
 
-Edraak is an Agentic AI CFO / Financial Seatbelt prototype for major financial commitments. It helps a user test decisions such as car financing, housing commitments, weddings, travel, debt payoff, emergency financing, and other large commitments before taking action.
+Edraak is a Cloud Run-ready FastAPI + React prototype for testing large financial commitments before a customer takes action.
 
-The current version uses only synthetic data and mock agent logic. It is safe for prototype and hackathon demos, and it does not connect to real BigQuery, Gemini, Vertex AI, or banking systems yet.
+The current app uses synthetic banking data and mock sequential agents. It does not require BigQuery, Gemini, Vertex AI, or Google ADK to run locally.
 
-## Folder Structure
+## Current Flow
+
+```text
+login
+-> identify customer
+-> collect customer data from source tables
+-> generate derived financial profile
+-> validate data
+-> run agents sequentially
+-> return recommendation
+-> show result in UI
+```
+
+The user no longer selects a fake profile. They log in with an English username such as `fahad`, `sara`, or `khalid`, then enter only the financial goal details.
+
+## Data Model
+
+Source banking tables:
+
+- `customers`: customer identity, Arabic/English names, salary, balance, birthday, and national ID placeholder.
+- `transactions`: customer spending and income history linked by `customer_id`.
+- `loans`: active and closed loan commitments linked by `customer_id`.
+
+Derived analytical table/object:
+
+- `user_profiles`: generated from `customers`, `transactions`, and `loans`.
+
+The bank does not originally own a user profile table. Edraak derives it through `app/functions/load_user_profiles.py`.
+
+## Project Structure
 
 ```text
 cloud-run/edrak/
   README.md
   Dockerfile
-  .dockerignore
   deploy.sh
   app/
     main.py
     requirements.txt
     functions/
-      __init__.py
       mock_data.py
       bigquery_data.py
-      financial_tools.py
+      load_user_profiles.py
+      tools/
+        calculate_obligation_ratio.py
+        calculate_monthly_buffer.py
+        calculate_risk_score.py
+        detect_recurring_obligations.py
+        categorize_spending.py
     agents/
-      __init__.py
       root_agent.py
+      data_validation_agent.py
       profile_agent.py
       risk_agent.py
       alternatives_agent.py
       recommendation_agent.py
       tools.py
   ui/
-    package.json
-    index.html
     src/
-      main.jsx
       App.jsx
       styles.css
 ```
 
-## Why These Folders Exist
+## Agents
 
-`app/` contains the FastAPI backend and Cloud Run entry point.
+Agents run only after the API has collected customer, transaction, loan, and derived profile data.
 
-`ui/` contains the minimal Vite + React frontend. The Docker build compiles it and copies the static files into `app/static`.
+Order:
 
-`agents/` contains the mock agent orchestration that will later map to Google ADK agents and tools. The app works locally today without requiring ADK, Gemini, or Vertex AI configuration.
+1. `data_validation_agent.py`
+2. `profile_agent.py`
+3. `risk_agent.py`
+4. `alternatives_agent.py`
+5. `recommendation_agent.py`
+
+`root_agent.py` coordinates the sequence. `agents/tools.py` keeps small ADK-ready wrappers around the calculation functions.
 
 ## Run Backend Locally
 
@@ -59,6 +95,18 @@ Health check:
 curl http://localhost:8080/api/health
 ```
 
+Generate derived user profiles manually:
+
+```bash
+curl -X POST http://localhost:8080/api/admin/load-user-profiles
+```
+
+You can also run:
+
+```bash
+python -m app.functions.load_user_profiles
+```
+
 ## Run UI Locally
 
 ```bash
@@ -67,7 +115,31 @@ npm install
 npm run dev
 ```
 
-During local UI development, the frontend calls `http://localhost:8080` when Vite is running on port `5173`. In Docker and Cloud Run, the UI uses same-origin API calls. You can override the API URL with `VITE_API_BASE_URL`.
+The Vite UI calls `http://localhost:8080` when running on port `5173`. In Docker and Cloud Run, API calls use same-origin requests. Override with `VITE_API_BASE_URL` if needed.
+
+## API
+
+- `GET /api/health`
+- `POST /api/login`
+- `POST /api/admin/load-user-profiles`
+- `GET /api/customer/{customer_id}`
+- `GET /api/customer/{customer_id}/profile`
+- `GET /api/customer/{customer_id}/transactions`
+- `GET /api/customer/{customer_id}/loans`
+- `POST /api/analyze`
+
+## BigQuery Placeholder
+
+`app/functions/bigquery_data.py` mirrors the future BigQuery tables:
+
+- `customers`
+- `transactions`
+- `loans`
+- `user_profiles`
+- `decision_requests`
+- `recommendations`
+
+For now, these functions call mock data so local running is not blocked by BigQuery setup.
 
 ## Build and Run With Docker
 
@@ -77,7 +149,7 @@ docker build -t edraak-app .
 docker run -p 8080:8080 edraak-app
 ```
 
-Then open:
+Open:
 
 ```bash
 http://localhost:8080
@@ -91,7 +163,7 @@ chmod +x deploy.sh
 ./deploy.sh
 ```
 
-The script deploys the service as `edraak-app` to `me-central2` by default. Override the region with:
+The script deploys `edraak-app` to `me-central2` by default. Override the region with:
 
 ```bash
 REGION=me-central2 ./deploy.sh
@@ -105,24 +177,13 @@ USE_ADK=false
 USE_GEMINI=false
 GCP_PROJECT_ID=
 BQ_DATASET=
-BQ_PROFILES_TABLE=
-BQ_TRANSACTIONS_TABLE=
-BQ_RECOMMENDATIONS_TABLE=
+BQ_CUSTOMERS_TABLE=customers
+BQ_TRANSACTIONS_TABLE=transactions
+BQ_LOANS_TABLE=loans
+BQ_USER_PROFILES_TABLE=user_profiles
+BQ_DECISION_REQUESTS_TABLE=decision_requests
+BQ_RECOMMENDATIONS_TABLE=recommendations
+VITE_API_BASE_URL=
 ```
 
-## BigQuery Integration
-
-Future BigQuery work belongs in `app/functions/bigquery_data.py`. The placeholder functions already show where to load customer profiles, load transactions, and save recommendations.
-
-## ADK and Gemini Integration
-
-Future Google ADK orchestration belongs in `app/agents/root_agent.py`. Agent-facing tools are collected in `app/agents/tools.py`, so they can later become real ADK tools without changing the API contract.
-
-## Current API
-
-- `GET /api/health`
-- `GET /api/profiles`
-- `GET /api/transactions/{user_id}`
-- `POST /api/analyze`
-
-All calculations are intentionally simple, readable, and mock-based so a developer can understand the full project quickly and replace pieces with production integrations later.
+All data is synthetic and safe for prototype or hackathon demos.

@@ -1,93 +1,318 @@
-PROFILES = [
+from datetime import datetime
+
+
+CUSTOMERS = [
     {
-        "user_id": "stable",
-        "name_ar": "سارة العميلة المستقرة",
-        "monthly_income": 18000,
-        "current_balance": 42000,
-        "savings": 65000,
-        "monthly_obligations": 4200,
-        "risk_preference_ar": "حذرة ومتوازنة",
-        "behavior_summary_ar": "دخل ثابت، التزامات منخفضة، وادخار شهري منتظم.",
-        "spending_categories": {
-            "السكن": 4200,
-            "المعيشة": 2800,
-            "النقل": 900,
-            "الترفيه": 1200,
-            "الادخار": 3500,
-        },
-        "avg_flexible_spending": 3200,
+        "customer_id": "CUST001",
+        "username_en": "fahad",
+        "ar_name": "فهد",
+        "en_name": "Fahad",
+        "national_id": "1000000001",
+        "birthday": "1990-04-12",
+        "salary": 16500,
+        "current_balance": 28500,
+        "created_at": "2026-06-01T09:00:00Z",
     },
     {
-        "user_id": "overcommitted",
-        "name_ar": "خالد الملتزم بأقساط عالية",
-        "monthly_income": 14500,
-        "current_balance": 8500,
-        "savings": 12000,
-        "monthly_obligations": 8200,
-        "risk_preference_ar": "يميل لاتخاذ قرارات سريعة",
-        "behavior_summary_ar": "نسبة الالتزامات مرتفعة والمرونة الشهرية محدودة.",
-        "spending_categories": {
-            "السكن": 4800,
-            "قروض قائمة": 3400,
-            "المعيشة": 3100,
-            "النقل": 1300,
-            "الترفيه": 1700,
-        },
-        "avg_flexible_spending": 3000,
+        "customer_id": "CUST002",
+        "username_en": "sara",
+        "ar_name": "سارة",
+        "en_name": "Sara",
+        "national_id": "1000000002",
+        "birthday": "1988-11-20",
+        "salary": 22000,
+        "current_balance": 76000,
+        "created_at": "2026-06-01T09:00:00Z",
     },
     {
-        "user_id": "high_spender",
-        "name_ar": "نورة ذات الدخل العالي والإنفاق العالي",
-        "monthly_income": 32000,
-        "current_balance": 26000,
-        "savings": 48000,
-        "monthly_obligations": 9300,
-        "risk_preference_ar": "مرنة وتقبل المخاطرة المحسوبة",
-        "behavior_summary_ar": "دخل عال لكن الإنفاق المرن يستهلك جزءا كبيرا من الفائض.",
-        "spending_categories": {
-            "السكن": 7600,
-            "قروض قائمة": 1700,
-            "المعيشة": 5200,
-            "السفر": 4800,
-            "الترفيه": 3900,
-            "الادخار": 3000,
-        },
-        "avg_flexible_spending": 9700,
+        "customer_id": "CUST003",
+        "username_en": "khalid",
+        "ar_name": "خالد",
+        "en_name": "Khalid",
+        "national_id": "1000000003",
+        "birthday": "1994-02-05",
+        "salary": 14500,
+        "current_balance": 9200,
+        "created_at": "2026-06-01T09:00:00Z",
     },
 ]
 
-TRANSACTIONS = {
-    "stable": [
-        {"date": "2026-06-01", "description_ar": "راتب شهري", "amount": 18000, "category_ar": "دخل"},
-        {"date": "2026-06-03", "description_ar": "إيجار", "amount": -4200, "category_ar": "السكن"},
-        {"date": "2026-06-07", "description_ar": "مشتريات أساسية", "amount": -850, "category_ar": "المعيشة"},
-        {"date": "2026-06-12", "description_ar": "تحويل إلى الادخار", "amount": -3500, "category_ar": "ادخار"},
-        {"date": "2026-06-19", "description_ar": "مطاعم وترفيه", "amount": -420, "category_ar": "ترفيه"},
-    ],
-    "overcommitted": [
-        {"date": "2026-06-01", "description_ar": "راتب شهري", "amount": 14500, "category_ar": "دخل"},
-        {"date": "2026-06-02", "description_ar": "إيجار", "amount": -4800, "category_ar": "السكن"},
-        {"date": "2026-06-05", "description_ar": "قسط تمويل قائم", "amount": -3400, "category_ar": "قروض"},
-        {"date": "2026-06-10", "description_ar": "مشتريات أساسية", "amount": -1200, "category_ar": "المعيشة"},
-        {"date": "2026-06-22", "description_ar": "ترفيه", "amount": -650, "category_ar": "ترفيه"},
-    ],
-    "high_spender": [
-        {"date": "2026-06-01", "description_ar": "راتب شهري", "amount": 32000, "category_ar": "دخل"},
-        {"date": "2026-06-03", "description_ar": "إيجار", "amount": -7600, "category_ar": "السكن"},
-        {"date": "2026-06-08", "description_ar": "حجز سفر", "amount": -4200, "category_ar": "السفر"},
-        {"date": "2026-06-14", "description_ar": "مطاعم", "amount": -1800, "category_ar": "ترفيه"},
-        {"date": "2026-06-25", "description_ar": "تحويل إلى الادخار", "amount": -3000, "category_ar": "ادخار"},
-    ],
-}
+
+TRANSACTIONS = [
+    {
+        "transaction_id": "TXN001",
+        "customer_id": "CUST001",
+        "transaction_date": "2026-06-01",
+        "merchant": "Employer",
+        "category": "salary",
+        "amount": 16500,
+        "transaction_type": "income",
+        "is_recurring": True,
+        "created_at": "2026-06-01T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN002",
+        "customer_id": "CUST001",
+        "transaction_date": "2026-06-03",
+        "merchant": "Landlord",
+        "category": "rent",
+        "amount": -4200,
+        "transaction_type": "expense",
+        "is_recurring": True,
+        "created_at": "2026-06-03T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN003",
+        "customer_id": "CUST001",
+        "transaction_date": "2026-06-07",
+        "merchant": "Hypermarket",
+        "category": "groceries",
+        "amount": -950,
+        "transaction_type": "expense",
+        "is_recurring": False,
+        "created_at": "2026-06-07T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN004",
+        "customer_id": "CUST001",
+        "transaction_date": "2026-06-14",
+        "merchant": "Restaurant",
+        "category": "restaurants",
+        "amount": -720,
+        "transaction_type": "expense",
+        "is_recurring": False,
+        "created_at": "2026-06-14T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN005",
+        "customer_id": "CUST001",
+        "transaction_date": "2026-06-20",
+        "merchant": "Fuel Station",
+        "category": "transport",
+        "amount": -510,
+        "transaction_type": "expense",
+        "is_recurring": False,
+        "created_at": "2026-06-20T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN006",
+        "customer_id": "CUST002",
+        "transaction_date": "2026-06-01",
+        "merchant": "Employer",
+        "category": "salary",
+        "amount": 22000,
+        "transaction_type": "income",
+        "is_recurring": True,
+        "created_at": "2026-06-01T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN007",
+        "customer_id": "CUST002",
+        "transaction_date": "2026-06-03",
+        "merchant": "Utilities Provider",
+        "category": "utilities",
+        "amount": -700,
+        "transaction_type": "expense",
+        "is_recurring": True,
+        "created_at": "2026-06-03T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN008",
+        "customer_id": "CUST002",
+        "transaction_date": "2026-06-08",
+        "merchant": "Investment Transfer",
+        "category": "transfer",
+        "amount": -4500,
+        "transaction_type": "transfer",
+        "is_recurring": True,
+        "created_at": "2026-06-08T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN009",
+        "customer_id": "CUST002",
+        "transaction_date": "2026-06-12",
+        "merchant": "Subscriptions",
+        "category": "subscriptions",
+        "amount": -390,
+        "transaction_type": "expense",
+        "is_recurring": True,
+        "created_at": "2026-06-12T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN010",
+        "customer_id": "CUST002",
+        "transaction_date": "2026-06-18",
+        "merchant": "Mall",
+        "category": "shopping",
+        "amount": -1800,
+        "transaction_type": "expense",
+        "is_recurring": False,
+        "created_at": "2026-06-18T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN011",
+        "customer_id": "CUST003",
+        "transaction_date": "2026-06-01",
+        "merchant": "Employer",
+        "category": "salary",
+        "amount": 14500,
+        "transaction_type": "income",
+        "is_recurring": True,
+        "created_at": "2026-06-01T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN012",
+        "customer_id": "CUST003",
+        "transaction_date": "2026-06-02",
+        "merchant": "Landlord",
+        "category": "rent",
+        "amount": -4800,
+        "transaction_type": "expense",
+        "is_recurring": True,
+        "created_at": "2026-06-02T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN013",
+        "customer_id": "CUST003",
+        "transaction_date": "2026-06-05",
+        "merchant": "BNPL Provider",
+        "category": "bnpl",
+        "amount": -1400,
+        "transaction_type": "expense",
+        "is_recurring": True,
+        "created_at": "2026-06-05T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN014",
+        "customer_id": "CUST003",
+        "transaction_date": "2026-06-10",
+        "merchant": "Hypermarket",
+        "category": "groceries",
+        "amount": -1250,
+        "transaction_type": "expense",
+        "is_recurring": False,
+        "created_at": "2026-06-10T09:00:00Z",
+    },
+    {
+        "transaction_id": "TXN015",
+        "customer_id": "CUST003",
+        "transaction_date": "2026-06-21",
+        "merchant": "Clinic",
+        "category": "emergency",
+        "amount": -2300,
+        "transaction_type": "expense",
+        "is_recurring": False,
+        "created_at": "2026-06-21T09:00:00Z",
+    },
+]
 
 
-def get_profiles():
-    return PROFILES
+LOANS = [
+    {
+        "loan_id": "LOAN001",
+        "customer_id": "CUST001",
+        "loan_type": "car",
+        "loan_total_amount": 90000,
+        "total_profit_amount": 18000,
+        "total_amount": 108000,
+        "remaining_amount": 65000,
+        "monthly_installment": 2300,
+        "start_date": "2024-01-01",
+        "end_date": "2028-01-01",
+        "status": "active",
+        "created_at": "2024-01-01T09:00:00Z",
+    },
+    {
+        "loan_id": "LOAN002",
+        "customer_id": "CUST002",
+        "loan_type": "home",
+        "loan_total_amount": 450000,
+        "total_profit_amount": 135000,
+        "total_amount": 585000,
+        "remaining_amount": 390000,
+        "monthly_installment": 5200,
+        "start_date": "2022-05-01",
+        "end_date": "2032-05-01",
+        "status": "active",
+        "created_at": "2022-05-01T09:00:00Z",
+    },
+    {
+        "loan_id": "LOAN003",
+        "customer_id": "CUST003",
+        "loan_type": "personal_finance",
+        "loan_total_amount": 70000,
+        "total_profit_amount": 14000,
+        "total_amount": 84000,
+        "remaining_amount": 58000,
+        "monthly_installment": 3100,
+        "start_date": "2025-03-01",
+        "end_date": "2028-03-01",
+        "status": "active",
+        "created_at": "2025-03-01T09:00:00Z",
+    },
+    {
+        "loan_id": "LOAN004",
+        "customer_id": "CUST003",
+        "loan_type": "closed_car",
+        "loan_total_amount": 52000,
+        "total_profit_amount": 8000,
+        "total_amount": 60000,
+        "remaining_amount": 0,
+        "monthly_installment": 0,
+        "start_date": "2021-01-01",
+        "end_date": "2024-01-01",
+        "status": "closed",
+        "created_at": "2021-01-01T09:00:00Z",
+    },
+]
 
 
-def get_profile_by_id(user_id):
-    return next((profile for profile in PROFILES if profile["user_id"] == user_id), None)
+USER_PROFILES = {}
 
 
-def get_transactions_by_user(user_id):
-    return TRANSACTIONS.get(user_id, [])
+def now_iso():
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def get_customers():
+    return CUSTOMERS
+
+
+def get_customer_by_username(username):
+    username = username.strip().lower()
+    return next((customer for customer in CUSTOMERS if customer["username_en"] == username), None)
+
+
+def get_customer_by_id(customer_id):
+    return next((customer for customer in CUSTOMERS if customer["customer_id"] == customer_id), None)
+
+
+def get_transactions_by_customer(customer_id):
+    return [transaction for transaction in TRANSACTIONS if transaction["customer_id"] == customer_id]
+
+
+def get_loans_by_customer(customer_id):
+    return [loan for loan in LOANS if loan["customer_id"] == customer_id]
+
+
+def get_active_loans_by_customer(customer_id):
+    return [
+        loan
+        for loan in LOANS
+        if loan["customer_id"] == customer_id and loan["status"] == "active"
+    ]
+
+
+def save_user_profile(profile):
+    USER_PROFILES[profile["customer_id"]] = profile
+    return profile
+
+
+def get_user_profile(customer_id):
+    return USER_PROFILES.get(customer_id)
+
+
+def save_user_profiles(profiles):
+    for profile in profiles:
+        save_user_profile(profile)
+    return profiles
