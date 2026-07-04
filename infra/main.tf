@@ -69,22 +69,25 @@ resource "google_bigquery_dataset_iam_member" "cloud_run_data_editor" {
   member     = module.cloud_run_service_account.iam_email
 }
 
-resource "google_bigquery_table" "customer_profiles" {
+resource "google_bigquery_table" "customers" {
   project             = var.project_id
   dataset_id          = google_bigquery_dataset.edraak.dataset_id
-  table_id            = "customer_profiles"
+  table_id            = "customers"
   deletion_protection = false
 
   schema = jsonencode([
-    { name = "user_id", type = "STRING", mode = "REQUIRED" },
-    { name = "name_ar", type = "STRING", mode = "NULLABLE" },
-    { name = "monthly_income", type = "FLOAT", mode = "NULLABLE" },
+    { name = "customer_id", type = "STRING", mode = "REQUIRED" },
+    { name = "username_en", type = "STRING", mode = "REQUIRED" },
+    { name = "ar_name", type = "STRING", mode = "NULLABLE" },
+    { name = "en_name", type = "STRING", mode = "NULLABLE" },
+    { name = "national_id", type = "STRING", mode = "NULLABLE" },
+    { name = "birthday", type = "DATE", mode = "NULLABLE" },
+    { name = "salary", type = "FLOAT", mode = "NULLABLE" },
     { name = "current_balance", type = "FLOAT", mode = "NULLABLE" },
-    { name = "savings", type = "FLOAT", mode = "NULLABLE" },
-    { name = "monthly_obligations", type = "FLOAT", mode = "NULLABLE" },
-    { name = "risk_preference_ar", type = "STRING", mode = "NULLABLE" },
-    { name = "behavior_summary_ar", type = "STRING", mode = "NULLABLE" },
-    { name = "avg_flexible_spending", type = "FLOAT", mode = "NULLABLE" },
+    { name = "city", type = "STRING", mode = "NULLABLE" },
+    { name = "employment_sector", type = "STRING", mode = "NULLABLE" },
+    { name = "employer_name", type = "STRING", mode = "NULLABLE" },
+    { name = "account_open_date", type = "DATE", mode = "NULLABLE" },
     { name = "created_at", type = "TIMESTAMP", mode = "NULLABLE" },
   ])
 }
@@ -95,21 +98,65 @@ resource "google_bigquery_table" "transactions" {
   table_id            = "transactions"
   deletion_protection = false
 
-  time_partitioning {
-    type  = "DAY"
-    field = "created_at"
-  }
-
   schema = jsonencode([
     { name = "transaction_id", type = "STRING", mode = "REQUIRED" },
-    { name = "user_id", type = "STRING", mode = "REQUIRED" },
+    { name = "customer_id", type = "STRING", mode = "REQUIRED" },
     { name = "transaction_date", type = "DATE", mode = "NULLABLE" },
     { name = "merchant", type = "STRING", mode = "NULLABLE" },
     { name = "category", type = "STRING", mode = "NULLABLE" },
     { name = "amount", type = "FLOAT", mode = "NULLABLE" },
     { name = "transaction_type", type = "STRING", mode = "NULLABLE" },
     { name = "is_recurring", type = "BOOLEAN", mode = "NULLABLE" },
+    { name = "channel", type = "STRING", mode = "NULLABLE" },
     { name = "created_at", type = "TIMESTAMP", mode = "NULLABLE" },
+  ])
+}
+
+resource "google_bigquery_table" "loans" {
+  project             = var.project_id
+  dataset_id          = google_bigquery_dataset.edraak.dataset_id
+  table_id            = "loans"
+  deletion_protection = false
+
+  schema = jsonencode([
+    { name = "loan_id", type = "STRING", mode = "REQUIRED" },
+    { name = "customer_id", type = "STRING", mode = "REQUIRED" },
+    { name = "loan_type", type = "STRING", mode = "NULLABLE" },
+    { name = "loan_total_amount", type = "FLOAT", mode = "NULLABLE" },
+    { name = "total_profit_amount", type = "FLOAT", mode = "NULLABLE" },
+    { name = "total_amount", type = "FLOAT", mode = "NULLABLE" },
+    { name = "remaining_amount", type = "FLOAT", mode = "NULLABLE" },
+    { name = "monthly_installment", type = "FLOAT", mode = "NULLABLE" },
+    { name = "start_date", type = "DATE", mode = "NULLABLE" },
+    { name = "end_date", type = "DATE", mode = "NULLABLE" },
+    { name = "status", type = "STRING", mode = "NULLABLE" },
+    { name = "created_at", type = "TIMESTAMP", mode = "NULLABLE" },
+  ])
+}
+
+resource "google_bigquery_table" "user_profiles" {
+  project             = var.project_id
+  dataset_id          = google_bigquery_dataset.edraak.dataset_id
+  table_id            = "user_profiles"
+  deletion_protection = false
+
+  schema = jsonencode([
+    { name = "customer_id", type = "STRING", mode = "REQUIRED" },
+    { name = "ar_name", type = "STRING", mode = "NULLABLE" },
+    { name = "en_name", type = "STRING", mode = "NULLABLE" },
+    { name = "salary", type = "FLOAT", mode = "NULLABLE" },
+    { name = "current_balance", type = "FLOAT", mode = "NULLABLE" },
+    { name = "active_loans_count", type = "INTEGER", mode = "NULLABLE" },
+    { name = "total_remaining_loans", type = "FLOAT", mode = "NULLABLE" },
+    { name = "monthly_loan_installments", type = "FLOAT", mode = "NULLABLE" },
+    { name = "avg_monthly_spending", type = "FLOAT", mode = "NULLABLE" },
+    { name = "avg_flexible_spending", type = "FLOAT", mode = "NULLABLE" },
+    { name = "recurring_obligations", type = "FLOAT", mode = "NULLABLE" },
+    { name = "savings_estimate", type = "FLOAT", mode = "NULLABLE" },
+    { name = "obligation_ratio", type = "FLOAT", mode = "NULLABLE" },
+    { name = "spending_behavior_summary_ar", type = "STRING", mode = "NULLABLE" },
+    { name = "risk_preference_estimate_ar", type = "STRING", mode = "NULLABLE" },
+    { name = "profile_generated_at", type = "TIMESTAMP", mode = "NULLABLE" },
   ])
 }
 
@@ -121,7 +168,7 @@ resource "google_bigquery_table" "decision_requests" {
 
   schema = jsonencode([
     { name = "request_id", type = "STRING", mode = "REQUIRED" },
-    { name = "user_id", type = "STRING", mode = "REQUIRED" },
+    { name = "customer_id", type = "STRING", mode = "REQUIRED" },
     { name = "goal_type", type = "STRING", mode = "NULLABLE" },
     { name = "goal_amount", type = "FLOAT", mode = "NULLABLE" },
     { name = "monthly_installment", type = "FLOAT", mode = "NULLABLE" },
@@ -138,21 +185,24 @@ resource "google_bigquery_table" "recommendations" {
   table_id            = "recommendations"
   deletion_protection = false
 
-  time_partitioning {
-    type  = "DAY"
-    field = "created_at"
-  }
-
   schema = jsonencode([
     { name = "recommendation_id", type = "STRING", mode = "REQUIRED" },
     { name = "request_id", type = "STRING", mode = "NULLABLE" },
-    { name = "user_id", type = "STRING", mode = "NULLABLE" },
+    { name = "customer_id", type = "STRING", mode = "NULLABLE" },
     { name = "recommendation", type = "STRING", mode = "NULLABLE" },
     { name = "risk_score", type = "FLOAT", mode = "NULLABLE" },
     { name = "safety_score", type = "FLOAT", mode = "NULLABLE" },
+    { name = "obligation_ratio_before", type = "FLOAT", mode = "NULLABLE" },
+    { name = "obligation_ratio_after", type = "FLOAT", mode = "NULLABLE" },
+    { name = "monthly_buffer_after", type = "FLOAT", mode = "NULLABLE" },
+    { name = "financial_seatbelt_status", type = "STRING", mode = "NULLABLE" },
+    { name = "confidence", type = "STRING", mode = "NULLABLE" },
+    { name = "validation_warnings_json", type = "STRING", mode = "NULLABLE" },
     { name = "explanation_ar", type = "STRING", mode = "NULLABLE" },
+    { name = "risk_factors_json", type = "STRING", mode = "NULLABLE" },
     { name = "safer_options_json", type = "STRING", mode = "NULLABLE" },
     { name = "readiness_path_json", type = "STRING", mode = "NULLABLE" },
+    { name = "agent_trace_json", type = "STRING", mode = "NULLABLE" },
     { name = "created_at", type = "TIMESTAMP", mode = "NULLABLE" },
   ])
 }
