@@ -28,9 +28,92 @@ The Cloud Run service uses min instances `0`, BigQuery is limited to a small dat
 ## Prerequisites
 
 - `gcloud` authenticated
+do ```bash
+Download the Google Cloud CLI Installer from google 
+```
+
+if doesnt work in vs code do : 
+
+
+```bash
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+then try 
+```bash
+gcloud --version
+```
+do
+```bash
+gcloud auth login
+```
+then do
+```bash
+gcloud auth application-default login
+```
+then do
+```bash
+gcloud auth application-default set-quota-project project-53540efb-1397-45cd-9d9
+```
+then do 
+```bash
+gcloud config set project project-53540efb-1397-45cd-9d9
+```
+
+then confirm project: 
+```bash
+gcloud config get-value project
+```
+
+
 - Correct Google Cloud project selected
 - Billing enabled on the project
 - Terraform installed, version `1.5` or newer
+
+### Install Terraform On Windows
+
+1. Download the Terraform executable.
+
+Go to the official [Terraform Download Page](https://developer.hashicorp.com/terraform/install).
+
+Under the Windows tab, download the `amd64` version. It will download a `.zip` file. Extract it, and you will see one file named:
+
+```text
+terraform.exe
+```
+
+2. Move Terraform to a permanent folder.
+
+Do not leave it in your Downloads folder. Create a permanent folder, for example:
+
+```text
+C:\terraform
+```
+
+Move `terraform.exe` into that `C:\terraform` folder.
+
+3. Add Terraform to your Windows PATH.
+
+Press the Windows key, type `env`, and select **Edit the system environment variables**.
+
+Click **Environment Variables...** at the bottom right.
+
+Under **System variables**, find `Path` and double-click it.
+
+Click **New** and add:
+
+```text
+C:\terraform
+```
+
+Click **OK** on all open windows to save.
+
+4. Restart VS Code and test.
+
+Close VS Code completely, then open it again. Open a new terminal and run:
+
+```powershell
+terraform --version
+```
 
 ## Configure
 
