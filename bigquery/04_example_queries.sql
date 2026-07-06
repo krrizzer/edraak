@@ -5,45 +5,123 @@
 -- Change edraak_finance if you use a different dataset name.
 
 -- Use this value in the examples below when testing one customer.
-DECLARE selected_user_id STRING DEFAULT 'stable';
+DECLARE selected_customer_id STRING DEFAULT 'CUST001';
+DECLARE selected_username STRING DEFAULT 'fahad';
 
--- 1. Get all customer profiles.
+-- 1. Find the customer by English username, same as the login flow.
 SELECT
-  *
-FROM `YOUR_PROJECT_ID.edraak_finance.customer_profiles`
-ORDER BY created_at DESC;
+  customer_id,
+  username_en,
+  ar_name,
+  en_name,
+  salary,
+  current_balance
+FROM `YOUR_PROJECT_ID.edraak_finance.customers`
+WHERE username_en = selected_username;
 
--- 2. Get transactions for a specific user.
+-- 2. Get all source customer records.
 SELECT
-  *
+  customer_id,
+  username_en,
+  ar_name,
+  en_name,
+  salary,
+  current_balance,
+  city,
+  employment_sector
+FROM `YOUR_PROJECT_ID.edraak_finance.customers`
+ORDER BY customer_id;
+
+-- 3. Get transactions for one customer.
+SELECT
+  transaction_id,
+  transaction_date,
+  merchant,
+  category,
+  amount,
+  transaction_type,
+  is_recurring,
+  channel
 FROM `YOUR_PROJECT_ID.edraak_finance.transactions`
-WHERE user_id = selected_user_id
+WHERE customer_id = selected_customer_id
 ORDER BY transaction_date DESC;
 
--- 3. Calculate total spending by category for a user.
+-- 4. Calculate spending by category for one customer.
 SELECT
   category,
   ROUND(SUM(ABS(amount)), 2) AS total_spending
 FROM `YOUR_PROJECT_ID.edraak_finance.transactions`
-WHERE user_id = selected_user_id
+WHERE customer_id = selected_customer_id
   AND transaction_type = 'expense'
 GROUP BY category
 ORDER BY total_spending DESC;
 
--- 4. Calculate recurring obligations for a user.
+-- 5. Calculate recurring obligations from transactions and active loans.
 SELECT
-  user_id,
-  ROUND(SUM(ABS(amount)), 2) AS recurring_obligations
-FROM `YOUR_PROJECT_ID.edraak_finance.transactions`
-WHERE user_id = selected_user_id
-  AND transaction_type = 'expense'
-  AND is_recurring = TRUE
-GROUP BY user_id;
+  customer.customer_id,
+  customer.ar_name,
+  IFNULL(transaction_obligations.recurring_transaction_amount, 0) AS recurring_transaction_amount,
+  IFNULL(loan_obligations.monthly_loan_installments, 0) AS monthly_loan_installments,
+  IFNULL(transaction_obligations.recurring_transaction_amount, 0)
+    + IFNULL(loan_obligations.monthly_loan_installments, 0) AS estimated_recurring_obligations
+FROM `YOUR_PROJECT_ID.edraak_finance.customers` AS customer
+LEFT JOIN (
+  SELECT
+    customer_id,
+    SUM(ABS(amount)) AS recurring_transaction_amount
+  FROM `YOUR_PROJECT_ID.edraak_finance.transactions`
+  WHERE transaction_type = 'expense'
+    AND is_recurring = TRUE
+  GROUP BY customer_id
+) AS transaction_obligations
+  ON customer.customer_id = transaction_obligations.customer_id
+LEFT JOIN (
+  SELECT
+    customer_id,
+    SUM(monthly_installment) AS monthly_loan_installments
+  FROM `YOUR_PROJECT_ID.edraak_finance.loans`
+  WHERE status = 'active'
+  GROUP BY customer_id
+) AS loan_obligations
+  ON customer.customer_id = loan_obligations.customer_id
+WHERE customer.customer_id = selected_customer_id;
 
--- 5. Get latest decision requests.
+-- 6. Get active loans for one customer.
+SELECT
+  loan_id,
+  loan_type,
+  loan_total_amount,
+  total_profit_amount,
+  total_amount,
+  remaining_amount,
+  monthly_installment,
+  start_date,
+  end_date,
+  status
+FROM `YOUR_PROJECT_ID.edraak_finance.loans`
+WHERE customer_id = selected_customer_id
+  AND status = 'active'
+ORDER BY start_date DESC;
+
+-- 7. Get the derived user profile used by the agents.
+SELECT
+  customer_id,
+  ar_name,
+  salary,
+  active_loans_count,
+  total_remaining_loans,
+  monthly_loan_installments,
+  avg_flexible_spending,
+  recurring_obligations,
+  obligation_ratio,
+  spending_behavior_summary_ar
+FROM `YOUR_PROJECT_ID.edraak_finance.user_profiles`
+WHERE customer_id = selected_customer_id;
+
+-- 8. Get latest decision requests.
 SELECT
   request_id,
-  user_id,
+  customer_id,
   goal_type,
   goal_amount,
   monthly_installment,
@@ -54,23 +132,24 @@ FROM `YOUR_PROJECT_ID.edraak_finance.decision_requests`
 ORDER BY created_at DESC
 LIMIT 20;
 
--- 6. Get recommendations with risk score.
+-- 9. Get recommendations with risk score.
 SELECT
   recommendation_id,
   request_id,
-  user_id,
+  customer_id,
   recommendation,
   risk_score,
   safety_score,
+  confidence,
   explanation_ar,
   created_at
 FROM `YOUR_PROJECT_ID.edraak_finance.recommendations`
 ORDER BY risk_score DESC;
 
--- 7. Compare obligation ratio before vs after a decision.
+-- 10. Compare obligation ratio before vs after each analyzed decision.
 SELECT
   recommendation_id,
-  user_id,
+  customer_id,
   recommendation,
   obligation_ratio_before,
   obligation_ratio_after,
@@ -78,18 +157,22 @@ SELECT
 FROM `YOUR_PROJECT_ID.edraak_finance.recommendations`
 ORDER BY obligation_ratio_change DESC;
 
--- 8. Query customers with high financial risk.
+-- 11. Query customers with high financial risk.
 SELECT
-  profile.user_id,
-  profile.name_ar,
-  profile.monthly_income,
-  profile.monthly_obligations,
+  customer.customer_id,
+  customer.ar_name,
+  customer.salary,
+  profile.recurring_obligations,
+  profile.obligation_ratio,
   recommendation.recommendation,
   recommendation.risk_score,
   recommendation.monthly_buffer_after
-FROM `YOUR_PROJECT_ID.edraak_finance.customer_profiles` AS profile
+FROM `YOUR_PROJECT_ID.edraak_finance.customers` AS customer
+JOIN `YOUR_PROJECT_ID.edraak_finance.user_profiles` AS profile
+  ON customer.customer_id = profile.customer_id
 JOIN `YOUR_PROJECT_ID.edraak_finance.recommendations` AS recommendation
-  ON profile.user_id = recommendation.user_id
+  ON customer.customer_id = recommendation.customer_id
 WHERE recommendation.risk_score >= 65
    OR recommendation.monthly_buffer_after < 0
+   OR profile.obligation_ratio >= 55
 ORDER BY recommendation.risk_score DESC;

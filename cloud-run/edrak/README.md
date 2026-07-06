@@ -1,92 +1,164 @@
 # Edraak Cloud Run App
 
-Edraak is a Cloud Run-ready FastAPI + React prototype for testing large financial commitments before a customer takes action.
+Edraak is a Cloud Run-ready FastAPI + React prototype for an Agentic AI CFO / Financial Seatbelt. It helps a banking customer test whether a major financial commitment is safe before taking action.
 
-The current app uses synthetic banking data and mock sequential agents. It does not require BigQuery, Gemini, Vertex AI, or Google ADK to run locally.
+The app runs in production-style mode only: it reads customer data from BigQuery and uses Gemini 2.5 Flash-Lite through Vertex AI. It does not fall back to local mock data or static agent responses.
 
-## Current Flow
+## Flow
 
 ```text
 login
 -> identify customer
--> collect customer data from source tables
--> generate derived financial profile
--> validate data
+-> collect customer data from customers, transactions, loans
+-> read derived user_profiles
+-> run deterministic financial tools
+-> build strict AgentContext
 -> run agents sequentially
--> return recommendation
--> show result in UI
+-> save decision and recommendation if BigQuery is enabled
+-> return stable response to UI
 ```
 
-The user no longer selects a fake profile. They log in with an English username such as `fahad`, `sara`, or `khalid`, then enter only the financial goal details.
+The user logs in with an English username such as `fahad`, `sara`, or `khalid`, then enters only the financial goal details.
 
 ## Data Model
 
 Source banking tables:
 
-- `customers`: customer identity, Arabic/English names, salary, balance, birthday, and national ID placeholder.
-- `transactions`: customer spending and income history linked by `customer_id`.
-- `loans`: active and closed loan commitments linked by `customer_id`.
+- `customers`
+- `transactions`
+- `loans`
 
-Derived analytical table/object:
+Derived analytical table:
 
-- `user_profiles`: generated from `customers`, `transactions`, and `loans`.
+- `user_profiles`
 
-The bank does not originally own a user profile table. Edraak derives it through `app/functions/load_user_profiles.py`.
+`user_profiles` is not an original bank table. It is generated from real BigQuery `customers`, `transactions`, and `loans`, then stored in BigQuery. If the row is missing during analysis, the backend generates it on demand, saves it to `user_profiles`, then continues the agent flow.
 
-## Project Structure
+The production loader is:
 
 ```text
-cloud-run/edrak/
-  README.md
-  Dockerfile
-  deploy.sh
-  app/
-    main.py
-    requirements.txt
-    functions/
-      mock_data.py
-      bigquery_data.py
-      load_user_profiles.py
-      tools/
-        calculate_obligation_ratio.py
-        calculate_monthly_buffer.py
-        calculate_risk_score.py
-        detect_recurring_obligations.py
-        categorize_spending.py
-    agents/
-      root_agent.py
-      data_validation_agent.py
-      profile_agent.py
-      risk_agent.py
-      alternatives_agent.py
-      recommendation_agent.py
-      tools.py
-  ui/
-    src/
-      App.jsx
-      styles.css
+app/functions/profile_loader.py
 ```
+
+It reads real BigQuery `customers`, `transactions`, and `loans`, calculates the derived profile, then inserts into `user_profiles`. The normal app flow can call the same calculation automatically when a profile is missing.
 
 ## Agents
 
-Agents run only after the API has collected customer, transaction, loan, and derived profile data.
+Agents live under `app/agents/`:
 
-Order:
+- `schemas.py`: shared context and strict agent output schemas
+- `gemini_client.py`: Vertex AI Gemini JSON helper with strict schema validation
+- `root_agent.py`: explicit orchestration
+- `data_validation_agent.py`
+- `profile_agent.py`
+- `risk_agent.py`
+- `alternatives_agent.py`
+- `recommendation_agent.py`
+- `tools.py`
 
-1. `data_validation_agent.py`
-2. `profile_agent.py`
-3. `risk_agent.py`
-4. `alternatives_agent.py`
-5. `recommendation_agent.py`
+The sequence is fixed:
 
-`root_agent.py` coordinates the sequence. `agents/tools.py` keeps small ADK-ready wrappers around the calculation functions.
+1. Data validation agent
+2. Profile agent
+3. Risk agent
+4. Alternatives agent
+5. Recommendation agent
 
-## Run Backend Locally
+Each agent returns a Pydantic-validated schema. If Gemini is disabled, misconfigured, fails, or returns invalid JSON, the request fails. The app does not return deterministic/static agent text in production mode.
+
+## Calculations
+
+Python tools run before the agents:
+
+- obligation ratio before
+- obligation ratio after
+- monthly buffer after
+- risk score
+- safety score
+- deterministic recommendation
+
+Gemini is not trusted for calculations or data retrieval. It only writes Arabic summaries, explanations, risks, alternatives, readiness steps, and recommendation wording based on calculated values.
+
+## BigQuery
+
+`USE_BIGQUERY=true` is required. The app reads:
+
+- `customers`
+- `transactions`
+- `loans`
+- `user_profiles`
+
+The app writes only:
+
+- `decision_requests`
+- `recommendations`
+
+`decision_requests` and `recommendations` are storage-only tables. They are not read back into the agent flow.
+
+If BigQuery is unavailable, misconfigured, or fails to write, the request fails.
+
+## Logs
+
+When running locally, logs appear in the backend terminal running `python -m uvicorn app.main:app --reload --port 8080`.
+
+The main log categories are:
+
+- `edraak.api`: login, customer endpoints, analysis start/end, persistence
+- `edraak.bigquery`: BigQuery table reads/writes and row counts
+- `edraak.agents`: agent flow, tool outputs, validation status
+- `edraak.gemini`: Vertex AI Gemini calls, model/location, response preview, schema validation
+
+In Cloud Run, the same logs appear in the service logs.
+
+## Vertex AI Gemini
+
+Use Vertex AI only:
+
+```text
+USE_GEMINI=true
+GCP_PROJECT_ID=YOUR_PROJECT_ID
+VERTEX_LOCATION=global
+GEMINI_MODEL=gemini-2.5-flash-lite
+```
+
+The app uses `google-genai` with `vertexai=True`. Do not use a Gemini API key path.
+
+## Run Locally On Windows
+
+Open VS Code at:
+
+```text
+C:\Users\yasse\Documents\github\edraak\cloud-run\edrak
+```
+
+### 1. Check Node.js And npm
+
+In a new VS Code terminal, run:
+
+```powershell
+node -v
+npm -v
+```
+
+If either command is not recognized, install Node.js LTS:
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+
+After installation, close VS Code completely, reopen it, and test again:
+
+```powershell
+node -v
+npm -v
+```
+
+### 2. Run Backend Locally
 
 ```bash
 cd cloud-run/edrak
 pip install -r app/requirements.txt
-uvicorn app.main:app --reload --port 8080
+python -m uvicorn app.main:app --reload --port 8080
 ```
 
 Health check:
@@ -95,27 +167,56 @@ Health check:
 curl http://localhost:8080/api/health
 ```
 
-Generate derived user profiles manually:
+For Vertex AI Gemini local mode:
 
-```bash
-curl -X POST http://localhost:8080/api/admin/load-user-profiles
+```powershell
+$env:USE_BIGQUERY="true"
+$env:USE_GEMINI="true"
+$env:GCP_PROJECT_ID="YOUR_PROJECT_ID"
+$env:VERTEX_LOCATION="global"
+$env:GEMINI_MODEL="gemini-2.5-flash-lite"
+python -m uvicorn app.main:app --reload --port 8080
 ```
 
-You can also run:
+Keep this backend terminal running.
 
-```bash
-python -m app.functions.load_user_profiles
+Optional: pre-load derived user profiles before analysis:
+
+```powershell
+curl.exe -X POST http://localhost:8080/api/admin/load-user-profiles
 ```
 
-## Run UI Locally
+Optional: pre-load one customer profile only:
+
+```powershell
+curl.exe -X POST http://localhost:8080/api/admin/load-user-profiles -H "Content-Type: application/json" -d "{\"customer_id\":\"CUST002\"}"
+```
+
+### 3. Run UI Locally
+
+Open a second VS Code terminal:
 
 ```bash
-cd cloud-run/edrak/ui
+cd C:\Users\yasse\Documents\github\edraak\cloud-run\edrak\ui
 npm install
 npm run dev
 ```
 
-The Vite UI calls `http://localhost:8080` when running on port `5173`. In Docker and Cloud Run, API calls use same-origin requests. Override with `VITE_API_BASE_URL` if needed.
+Open the URL printed by Vite, usually:
+
+```text
+http://localhost:5173
+```
+
+Login with:
+
+```text
+fahad
+sara
+khalid
+```
+
+The Vite UI calls `http://localhost:8080` when running on port `5173`. In Docker and Cloud Run, API calls use same-origin requests.
 
 ## API
 
@@ -128,20 +229,7 @@ The Vite UI calls `http://localhost:8080` when running on port `5173`. In Docker
 - `GET /api/customer/{customer_id}/loans`
 - `POST /api/analyze`
 
-## BigQuery Placeholder
-
-`app/functions/bigquery_data.py` mirrors the future BigQuery tables:
-
-- `customers`
-- `transactions`
-- `loans`
-- `user_profiles`
-- `decision_requests`
-- `recommendations`
-
-For now, these functions call mock data so local running is not blocked by BigQuery setup.
-
-## Build and Run With Docker
+## Build With Docker
 
 ```bash
 cd cloud-run/edrak
@@ -159,24 +247,30 @@ http://localhost:8080
 
 ```bash
 cd cloud-run/edrak
-chmod +x deploy.sh
-./deploy.sh
+
+gcloud run deploy edraak-app \
+  --source . \
+  --region me-central2 \
+  --allow-unauthenticated \
+  --set-env-vars USE_BIGQUERY=true,USE_GEMINI=true,GCP_PROJECT_ID=YOUR_PROJECT_ID,VERTEX_LOCATION=global,GEMINI_MODEL=gemini-2.5-flash-lite,BQ_DATASET=edraak_finance
 ```
 
-The script deploys `edraak-app` to `me-central2` by default. Override the region with:
+Or use:
 
 ```bash
-REGION=me-central2 ./deploy.sh
+GCP_PROJECT_ID=YOUR_PROJECT_ID ./deploy.sh
 ```
 
 ## Environment Variables
 
 ```text
 PORT=8080
-USE_ADK=false
-USE_GEMINI=false
+USE_BIGQUERY=true
+USE_GEMINI=true
 GCP_PROJECT_ID=
-BQ_DATASET=
+VERTEX_LOCATION=global
+GEMINI_MODEL=gemini-2.5-flash-lite
+BQ_DATASET=edraak_finance
 BQ_CUSTOMERS_TABLE=customers
 BQ_TRANSACTIONS_TABLE=transactions
 BQ_LOANS_TABLE=loans
@@ -186,4 +280,4 @@ BQ_RECOMMENDATIONS_TABLE=recommendations
 VITE_API_BASE_URL=
 ```
 
-All data is synthetic and safe for prototype or hackathon demos.
+The application path expects real BigQuery table data. Synthetic SQL files can still be used to seed a demo dataset, but the running app does not use in-code mock data.

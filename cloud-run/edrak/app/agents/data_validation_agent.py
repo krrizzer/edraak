@@ -1,35 +1,27 @@
-def validate_data(customer, transactions, loans, profile, decision_input):
-    warnings = []
+from app.agents.gemini_client import run_gemini_agent
+from app.agents.schemas import DataValidationOutput
 
-    if not customer:
-        warnings.append("لم يتم العثور على بيانات العميل.")
-    elif not customer.get("salary"):
-        warnings.append("راتب العميل غير متوفر.")
 
-    if not transactions:
-        warnings.append("لا توجد معاملات كافية لتحليل سلوك الإنفاق.")
+INSTRUCTION = """
+You are the Edraak Data Validation Agent.
+Do:
+- Verify the customer, transactions, active loans, derived user profile, decision input, and tool outputs are internally consistent.
+- Check that customer_id matches across customer, transactions, loans, user_profile, and decision_input.
+- Flag missing transaction history as a warning, not a fabricated replacement.
+- Put hard blockers in blocking_errors_ar when required source data is missing, mismatched, or mathematically impossible.
+- Use Arabic for every user-facing field.
+Do not:
+- Do not invent or repair data.
+- Do not create sample rows.
+- Do not read or reason from decision_requests or recommendations.
+- Do not change any numeric value.
+"""
 
-    if loans is None:
-        warnings.append("تعذر قراءة بيانات القروض.")
 
-    if not profile:
-        warnings.append("لم يتم بناء الملف المالي المشتق.")
-
-    if decision_input.get("monthly_installment", 0) <= 0:
-        warnings.append("القسط الشهري المتوقع يجب أن يكون أكبر من صفر.")
-
-    if decision_input.get("duration_months", 0) <= 0:
-        warnings.append("مدة الالتزام يجب أن تكون أكبر من صفر.")
-
-    confidence = "عالية"
-    if warnings:
-        confidence = "متوسطة" if customer and profile else "منخفضة"
-
-    return {
-        "is_valid": customer is not None
-        and profile is not None
-        and decision_input.get("monthly_installment", 0) > 0
-        and decision_input.get("duration_months", 0) > 0,
-        "warnings_ar": warnings,
-        "confidence": confidence,
-    }
+def validate_data(context):
+    return run_gemini_agent(
+        "data_validation_agent",
+        context,
+        DataValidationOutput,
+        INSTRUCTION,
+    )

@@ -11,8 +11,10 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
-ENV USE_ADK=false
+ENV USE_BIGQUERY=false
 ENV USE_GEMINI=false
+ENV VERTEX_LOCATION=global
+ENV GEMINI_MODEL=gemini-2.5-flash-lite
 
 WORKDIR /app
 COPY app/requirements.txt ./app/requirements.txt

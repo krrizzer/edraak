@@ -1,21 +1,23 @@
-from app.functions.tools import (
-    calculate_monthly_buffer,
-    calculate_obligation_ratio,
-    calculate_risk_score,
-)
+from app.functions.tools import calculate_monthly_buffer, calculate_obligation_ratio, calculate_risk_score
 
 
-# These wrappers stay small so they can become Google ADK tools later.
 def obligation_ratio_tool(monthly_obligations, salary):
     return calculate_obligation_ratio(monthly_obligations, salary)
 
 
-def monthly_buffer_tool(salary, monthly_obligations, new_installment, avg_flexible_spending):
+def monthly_buffer_tool(
+    salary,
+    recurring_obligations,
+    monthly_loan_installments,
+    avg_flexible_spending,
+    new_installment,
+):
     return calculate_monthly_buffer(
         salary,
-        monthly_obligations,
-        new_installment,
+        recurring_obligations,
+        monthly_loan_installments,
         avg_flexible_spending,
+        new_installment,
     )
 
 

@@ -1,39 +1,45 @@
+from app.agents.gemini_client import GeminiAgentError, run_gemini_agent
+from app.agents.schemas import RecommendationAgentOutput
+
+
+INSTRUCTION = """
+You are the Edraak Final Recommendation Agent.
+Do:
+- Write the final recommendation in clear Arabic.
+- Set recommendation exactly equal to tool_outputs.deterministic_recommendation.
+- Explain the decision using the already-calculated risk_score, safety_score, obligation ratios, and monthly buffer.
+- Use outputs from validation, profile, risk, and alternatives agents when present in context.
+- Use Arabic for every user-facing field.
+Do not:
+- Do not override tool_outputs.deterministic_recommendation.
+- Do not invent numbers, loans, transactions, balances, or customer profile details.
+- Do not use decision_requests or recommendations as analytical input; those tables are storage-only.
+- Do not return Markdown.
+"""
+
+
 def choose_recommendation(risk_score, obligation_ratio_after, monthly_buffer_after):
-    if risk_score >= 85 or monthly_buffer_after < 0:
+    if monthly_buffer_after < 0:
         return "التجنّب"
-    if risk_score >= 65 or obligation_ratio_after >= 55:
+    if obligation_ratio_after >= 60 or risk_score >= 80:
+        return "التجنّب"
+    if obligation_ratio_after >= 45 or risk_score >= 65:
         return "التأجيل"
-    if risk_score >= 40 or obligation_ratio_after >= 40:
+    if obligation_ratio_after >= 35 or risk_score >= 45:
         return "الحذر"
     return "المضي قدمًا"
 
 
-def generate_readiness_path(profile, decision_input, metrics):
-    target_buffer = max(round(profile["salary"] * 0.15), decision_input["monthly_installment"])
-    flexible_cut = max(round(profile["avg_flexible_spending"] * 0.15), 500)
-
-    return {
-        "30_days": [
-            f"خفض المصروفات المرنة بنحو {flexible_cut:,} ريال ومراجعة الاشتراكات والمدفوعات المتكررة.",
-            "تحديد الالتزامات التي يمكن سدادها أو إعادة جدولتها قبل القرار.",
-        ],
-        "60_days": [
-            f"رفع الفائض الشهري المستهدف إلى {target_buffer:,} ريال قبل إضافة القسط الجديد.",
-            "زيادة الدفعة المقدمة أو تقليل مبلغ الهدف بناء على الفائض الفعلي.",
-        ],
-        "90_days": [
-            "إعادة تشغيل التحليل بنفس الأرقام بعد تحسن الفائض والادخار.",
-            "المضي فقط إذا انخفضت نسبة الالتزامات وبقي حزام الأمان المالي مفعلا.",
-        ],
-    }
-
-
-def generate_final_explanation(recommendation, profile, decision_input, metrics):
-    return (
-        f"التوصية هي {recommendation}. الراتب الشهري {profile['salary']:,} ريال، "
-        f"والالتزامات الحالية تمثل {metrics['obligation_ratio_before']}% من الراتب. "
-        f"بعد إضافة قسط شهري جديد قدره {decision_input['monthly_installment']:,} ريال "
-        f"ستصل نسبة الالتزامات إلى {metrics['obligation_ratio_after']}%. "
-        f"الفائض الشهري المتوقع بعد القرار هو {metrics['monthly_buffer_after']:,} ريال، "
-        f"ودرجة المخاطر {metrics['risk_score']} من 100 مقابل درجة أمان {metrics['safety_score']} من 100."
+def generate_recommendation(context):
+    output = run_gemini_agent(
+        "recommendation_agent",
+        context,
+        RecommendationAgentOutput,
+        INSTRUCTION,
     )
+    expected = context.tool_outputs.deterministic_recommendation
+    if output.recommendation != expected:
+        raise GeminiAgentError(
+            f"Recommendation agent returned {output.recommendation!r}, expected {expected!r}."
+        )
+    return output

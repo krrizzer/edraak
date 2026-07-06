@@ -1,38 +1,27 @@
-def analyze_risk(profile, loans, decision_input, metrics):
-    factors = []
+from app.agents.gemini_client import run_gemini_agent
+from app.agents.schemas import RiskAgentOutput
 
-    if profile["active_loans_count"] > 0:
-        factors.append(
-            f"لدى العميل {profile['active_loans_count']} قروض نشطة بإجمالي متبقٍ {profile['total_remaining_loans']:,} ريال."
-        )
 
-    if metrics["obligation_ratio_after"] >= 55:
-        factors.append(
-            f"نسبة الالتزامات بعد القرار سترتفع إلى {metrics['obligation_ratio_after']}% من الراتب."
-        )
-    elif metrics["obligation_ratio_after"] >= 40:
-        factors.append(
-            f"نسبة الالتزامات بعد القرار تصبح {metrics['obligation_ratio_after']}% وتحتاج متابعة."
-        )
+INSTRUCTION = """
+You are the Edraak Risk Analysis Agent.
+Do:
+- Explain the risk of the new commitment using only tool_outputs, user_profile, active loans, and decision_input.
+- Use the provided risk_score and safety_score as fixed calculated values.
+- Identify concrete risk factors tied to obligation ratio, monthly buffer, existing loans, spending behavior, and urgency.
+- Set financial_seatbelt_status in Arabic based on whether the customer remains financially safe after the decision.
+- Use Arabic for every user-facing field.
+Do not:
+- Do not choose the final recommendation.
+- Do not recalculate risk_score, safety_score, or obligation ratios.
+- Do not invent missing data or use sample/static values.
+- Do not use decision_requests or recommendations as analytical input.
+"""
 
-    if metrics["monthly_buffer_after"] < 0:
-        factors.append(
-            f"الفائض الشهري المتوقع بعد القرار يصبح سالبا: {metrics['monthly_buffer_after']:,} ريال."
-        )
-    elif metrics["monthly_buffer_after"] < profile["salary"] * 0.1:
-        factors.append(
-            f"الفائض الشهري المتوقع منخفض: {metrics['monthly_buffer_after']:,} ريال."
-        )
 
-    if profile["avg_flexible_spending"] > profile["salary"] * 0.25:
-        factors.append(
-            f"الإنفاق المرن مرتفع ويبلغ حوالي {profile['avg_flexible_spending']:,} ريال شهريا."
-        )
-
-    if decision_input.get("urgency") == "high":
-        factors.append("درجة الاستعجال عالية وقد تؤدي إلى قرار أقل جودة.")
-
-    if not factors:
-        factors.append("المؤشرات الأساسية لا تظهر ضغطا ماليا عاليا بعد القرار.")
-
-    return factors
+def analyze_risk(context):
+    return run_gemini_agent(
+        "risk_agent",
+        context,
+        RiskAgentOutput,
+        INSTRUCTION,
+    )

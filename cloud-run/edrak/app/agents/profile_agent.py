@@ -1,37 +1,26 @@
-def analyze_profile(profile):
-    obligation_ratio = profile["obligation_ratio"]
-    savings_months = round(
-        profile["savings_estimate"] / max(profile["recurring_obligations"], 1),
-        1,
+from app.agents.gemini_client import run_gemini_agent
+from app.agents.schemas import ProfileAgentOutput
+
+
+INSTRUCTION = """
+You are the Edraak Financial Profile Agent.
+Do:
+- Explain the already-derived user_profile using the customer, transaction, and active loan context.
+- Summarize income strength, savings strength, current obligations, and spending behavior.
+- Mention profile concerns only when supported by the supplied profile or calculated tool outputs.
+- Use Arabic for every user-facing field.
+Do not:
+- Do not calculate a new profile.
+- Do not invent transactions, salary, savings, obligations, or risk preferences.
+- Do not use decision_requests or recommendations as input; they are storage-only tables.
+- Do not produce a final recommendation.
+"""
+
+
+def analyze_profile(context):
+    return run_gemini_agent(
+        "profile_agent",
+        context,
+        ProfileAgentOutput,
+        INSTRUCTION,
     )
-
-    if profile["salary"] >= 20000:
-        income_status = "قوي"
-    elif profile["salary"] >= 14000:
-        income_status = "متوسط"
-    else:
-        income_status = "محدود"
-
-    if savings_months >= 6:
-        savings_status = "قوية"
-    elif savings_months >= 3:
-        savings_status = "مقبولة"
-    else:
-        savings_status = "محدودة"
-
-    if obligation_ratio >= 55:
-        obligations_status = "مرتفعة"
-    elif obligation_ratio >= 35:
-        obligations_status = "متوسطة"
-    else:
-        obligations_status = "منخفضة"
-
-    return {
-        "income_status": income_status,
-        "savings_status": savings_status,
-        "obligations_status": obligations_status,
-        "message_ar": (
-            f"تم بناء الملف المالي من بيانات البنك. الدخل {income_status}، "
-            f"المدخرات {savings_status}، ونسبة الالتزامات الحالية {obligation_ratio}%."
-        ),
-    }

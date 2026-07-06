@@ -1,2 +1,14 @@
-def calculate_monthly_buffer(salary, monthly_obligations, new_installment, avg_flexible_spending):
-    return round(salary - monthly_obligations - new_installment - avg_flexible_spending)
+def calculate_monthly_buffer(
+    salary,
+    recurring_obligations,
+    monthly_loan_installments,
+    avg_flexible_spending,
+    new_installment,
+):
+    return round(
+        salary
+        - recurring_obligations
+        - monthly_loan_installments
+        - avg_flexible_spending
+        - new_installment
+    )
