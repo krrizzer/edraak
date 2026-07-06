@@ -19,6 +19,13 @@ const urgencyOptions = [
   ["high", "عالية"],
 ];
 
+const analysisSteps = [
+  "تحميل بيانات العميل",
+  "قراءة المعاملات والقروض",
+  "تشغيل وكلاء التحليل",
+  "تجهيز التوصية النهائية",
+];
+
 export default function App() {
   const [username, setUsername] = useState("");
   const [customer, setCustomer] = useState(null);
@@ -31,8 +38,11 @@ export default function App() {
     urgency: "medium",
   });
   const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const isBusy = loginLoading || analysisLoading;
 
   function updateField(field, value) {
     setForm((current) => ({
@@ -43,7 +53,7 @@ export default function App() {
 
   async function login(event) {
     event.preventDefault();
-    setLoading(true);
+    setLoginLoading(true);
     setError("");
 
     try {
@@ -53,19 +63,19 @@ export default function App() {
         body: JSON.stringify({ username }),
       });
 
-      if (!response.ok) throw new Error("login failed");
+      if (!response.ok) throw new Error(await responseError(response, "فشل تسجيل الدخول."));
       setCustomer(await response.json());
       setResult(null);
-    } catch {
-      setError("لم يتم العثور على المستخدم. جرّب fahad أو sara أو khalid.");
+    } catch (err) {
+      setError(err.message);
     } finally {
-      setLoading(false);
+      setLoginLoading(false);
     }
   }
 
   async function analyzeDecision(event) {
     event.preventDefault();
-    setLoading(true);
+    setAnalysisLoading(true);
     setError("");
     setResult(null);
 
@@ -76,12 +86,12 @@ export default function App() {
         body: JSON.stringify({ customer_id: customer.customer_id, ...form }),
       });
 
-      if (!response.ok) throw new Error("analysis failed");
+      if (!response.ok) throw new Error(await responseError(response, "فشل تحليل القرار."));
       setResult(await response.json());
-    } catch {
-      setError("تعذر تحليل القرار. تأكد من تشغيل الـ API.");
+    } catch (err) {
+      setError(err.message);
     } finally {
-      setLoading(false);
+      setAnalysisLoading(false);
     }
   }
 
@@ -101,12 +111,21 @@ export default function App() {
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
                 placeholder="fahad"
+                disabled={loginLoading}
               />
             </label>
-            <button className="primary-action" type="submit" disabled={loading || !username.trim()}>
-              {loading ? "جاري الدخول..." : "دخول"}
+            <button className="primary-action" type="submit" disabled={loginLoading || !username.trim()}>
+              {loginLoading ? (
+                <span className="button-loading">
+                  <Spinner />
+                  جاري الدخول...
+                </span>
+              ) : (
+                "دخول"
+              )}
             </button>
             <p className="helper">جرّب: fahad أو sara أو khalid</p>
+            {loginLoading && <InlineLoading title="جاري التحقق من المستخدم" detail="نبحث عن بيانات العميل الأساسية." />}
             {error && <p className="error">{error}</p>}
           </form>
         </section>
@@ -120,9 +139,17 @@ export default function App() {
         <div>
           <p className="eyebrow">إدراك</p>
           <h1>مرحبًا، {customer.ar_name}</h1>
-          <p>أدخل تفاصيل القرار المالي وسنحلل أثره بناء على بياناتك البنكية التجريبية.</p>
+          <p>أدخل تفاصيل القرار المالي وسنحلل أثره بناءً على بياناتك البنكية التجريبية.</p>
         </div>
-        <button className="secondary-action" onClick={() => setCustomer(null)}>
+        <button
+          className="secondary-action"
+          onClick={() => {
+            setCustomer(null);
+            setResult(null);
+            setError("");
+          }}
+          disabled={isBusy}
+        >
           تغيير المستخدم
         </button>
       </header>
@@ -132,7 +159,7 @@ export default function App() {
           <h2>تفاصيل القرار</h2>
           <label>
             نوع الهدف
-            <select value={form.goal_type} onChange={(event) => updateField("goal_type", event.target.value)}>
+            <select value={form.goal_type} onChange={(event) => updateField("goal_type", event.target.value)} disabled={analysisLoading}>
               {goalTypes.map(([value, label]) => (
                 <option value={value} key={value}>
                   {label}
@@ -142,23 +169,23 @@ export default function App() {
           </label>
           <label>
             مبلغ الهدف
-            <input type="number" value={form.goal_amount} onChange={(event) => updateField("goal_amount", event.target.value)} />
+            <input type="number" value={form.goal_amount} onChange={(event) => updateField("goal_amount", event.target.value)} disabled={analysisLoading} />
           </label>
           <label>
             القسط الشهري المتوقع
-            <input type="number" value={form.monthly_installment} onChange={(event) => updateField("monthly_installment", event.target.value)} />
+            <input type="number" value={form.monthly_installment} onChange={(event) => updateField("monthly_installment", event.target.value)} disabled={analysisLoading} />
           </label>
           <label>
             مدة الالتزام بالأشهر
-            <input type="number" value={form.duration_months} onChange={(event) => updateField("duration_months", event.target.value)} />
+            <input type="number" value={form.duration_months} onChange={(event) => updateField("duration_months", event.target.value)} disabled={analysisLoading} />
           </label>
           <label>
             الدفعة المقدمة
-            <input type="number" value={form.down_payment} onChange={(event) => updateField("down_payment", event.target.value)} />
+            <input type="number" value={form.down_payment} onChange={(event) => updateField("down_payment", event.target.value)} disabled={analysisLoading} />
           </label>
           <label>
             درجة الاستعجال
-            <select value={form.urgency} onChange={(event) => updateField("urgency", event.target.value)}>
+            <select value={form.urgency} onChange={(event) => updateField("urgency", event.target.value)} disabled={analysisLoading}>
               {urgencyOptions.map(([value, label]) => (
                 <option value={value} key={value}>
                   {label}
@@ -166,15 +193,23 @@ export default function App() {
               ))}
             </select>
           </label>
-          <button className="primary-action" type="submit" disabled={loading}>
-            {loading ? "جاري التحليل..." : "حلّل القرار"}
+          <button className="primary-action" type="submit" disabled={analysisLoading}>
+            {analysisLoading ? (
+              <span className="button-loading">
+                <Spinner />
+                جاري التحليل...
+              </span>
+            ) : (
+              "حلّل القرار"
+            )}
           </button>
           {error && <p className="error">{error}</p>}
         </form>
 
         <section className="results">
-          {!result && <p className="empty-state">ابدأ التحليل لعرض التوصية ومسار الوكلاء.</p>}
-          {result && <Results result={result} />}
+          {analysisLoading && <LoadingPanel title="جاري تحليل القرار" steps={analysisSteps} />}
+          {!analysisLoading && !result && <p className="empty-state">ابدأ التحليل لعرض التوصية ومسار الوكلاء.</p>}
+          {!analysisLoading && result && <Results result={result} />}
         </section>
       </section>
     </main>
@@ -283,4 +318,54 @@ function AgentTrace({ items }) {
       </div>
     </article>
   );
+}
+
+function InlineLoading({ title, detail }) {
+  return (
+    <div className="inline-loading">
+      <Spinner />
+      <div>
+        <strong>{title}</strong>
+        <span>{detail}</span>
+      </div>
+    </div>
+  );
+}
+
+function LoadingPanel({ title, steps }) {
+  return (
+    <article className="loading-panel" aria-live="polite">
+      <div className="loading-hero">
+        <Spinner size="large" />
+        <div>
+          <h2>{title}</h2>
+          <p>الطلب يعمل الآن، وستظهر النتيجة هنا مباشرة عند اكتمال التحليل.</p>
+        </div>
+      </div>
+      <div className="loading-steps">
+        {steps.map((step, index) => (
+          <div className="loading-step" style={{ "--delay": `${index * 0.35}s` }} key={step}>
+            <span className="loading-dot" />
+            <strong>{step}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="loading-bar" />
+    </article>
+  );
+}
+
+function Spinner({ size = "small" }) {
+  return <span className={`spinner spinner-${size}`} aria-hidden="true" />;
+}
+
+async function responseError(response, defaultMessage) {
+  try {
+    const body = await response.json();
+    if (body?.error) return body.error;
+    if (body?.detail) return typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+  } catch {
+    // Keep the default message when the backend response is not JSON.
+  }
+  return defaultMessage;
 }
