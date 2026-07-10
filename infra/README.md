@@ -8,7 +8,9 @@ This folder contains a small Terraform layer for the Edraak hackathon prototype.
 - A Cloud Run runtime service account
 - Minimal project IAM for that service account
 - One BigQuery dataset named `edraak_finance` by default
-- Four BigQuery tables for profiles, transactions, decision requests, and recommendations
+- Nine BigQuery tables: `customers`, `accounts`, `transactions`, `loans`,
+  `user_profiles`, `detected_obligations`, `decision_requests`,
+  `recommendations`, and `alerts`
 - One Docker Artifact Registry repository
 - An optional placeholder Cloud Run service using a public sample image
 - Optional Secret Manager secret containers with no real secret values
@@ -158,8 +160,11 @@ If Terraform created the placeholder Cloud Run service, a future `terraform appl
 
 ## Notes
 
-BigQuery integration should be added later in `../cloud-run/edrak/app/functions/bigquery_data.py`.
+All BigQuery reads and writes live in `../cloud-run/edrak/app/data/bigquery_client.py`.
 
-ADK and Gemini integration should be added later in `../cloud-run/edrak/app/agents/root_agent.py` and `../cloud-run/edrak/app/agents/tools.py`.
+Vertex AI Gemini calls live in `../cloud-run/edrak/app/agents/gemini_client.py`.
+
+After `terraform apply`, load the demo data with
+`python -m app.data.seed.load_seed_data` from `../cloud-run/edrak`.
 
 Do not put real secret values in Terraform. If `create_secrets = true`, Terraform creates empty secret containers only. Add real values manually or through CI/CD.

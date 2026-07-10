@@ -1,1 +1,1 @@
-"""Mock-ready agent modules for future Google ADK integration."""
+"""LLM agent layer: transaction intelligence, decision advisor, and intervention agents."""

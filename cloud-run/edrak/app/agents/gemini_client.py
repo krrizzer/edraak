@@ -1,25 +1,30 @@
+"""One place for Vertex AI Gemini calls, strict schema validation, and number auditing."""
 import json
 import logging
-import os
+import re
 
 from pydantic import BaseModel, ValidationError
 
+from app import config
+
 
 logger = logging.getLogger("edraak.gemini")
-
-DEFAULT_VERTEX_LOCATION = "global"
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
 
 
 class GeminiAgentError(RuntimeError):
     pass
 
 
-def run_gemini_agent(agent_name, context, output_schema, instruction):
-    if os.getenv("USE_GEMINI", "true").lower() != "true":
-        raise GeminiAgentError("USE_GEMINI must be true. Production mode requires Vertex AI Gemini.")
+def run_gemini_agent(agent_name: str, payload: dict, output_schema: type[BaseModel],
+                     instruction: str) -> BaseModel:
+    """Call Gemini with a JSON payload and validate the response against the schema.
 
-    project_id = os.getenv("GCP_PROJECT_ID")
+    Hard-fails on invalid output — no static fallback text. The only tolerated
+    repair is the amount-echo fallback inside the Transaction Intelligence Agent.
+    """
+    if not config.use_gemini():
+        raise GeminiAgentError("USE_GEMINI must be true. Production mode requires Vertex AI Gemini.")
+    project_id = config.gcp_project_id()
     if not project_id or project_id == "YOUR_PROJECT_ID":
         raise GeminiAgentError("GCP_PROJECT_ID is required for Vertex AI Gemini.")
 
@@ -27,20 +32,14 @@ def run_gemini_agent(agent_name, context, output_schema, instruction):
         from google import genai
         from google.genai import types
 
-        location = os.getenv("VERTEX_LOCATION", DEFAULT_VERTEX_LOCATION)
-        model = os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
-        prompt = _build_prompt(context, output_schema, instruction)
+        prompt = _build_prompt(payload, output_schema, instruction)
         logger.info(
             "flow.gemini.call.start agent=%s provider=vertex_ai project_id=%s location=%s model=%s prompt_chars=%s message=Calling Vertex AI Gemini for this agent",
-            agent_name,
-            project_id,
-            location,
-            model,
-            len(prompt),
+            agent_name, project_id, config.vertex_location(), config.gemini_model(), len(prompt),
         )
-        client = genai.Client(vertexai=True, project=project_id, location=location)
+        client = genai.Client(vertexai=True, project=project_id, location=config.vertex_location())
         response = client.models.generate_content(
-            model=model,
+            model=config.gemini_model(),
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.2,
@@ -50,13 +49,12 @@ def run_gemini_agent(agent_name, context, output_schema, instruction):
         response_text = response.text or "{}"
         logger.info(
             "flow.gemini.response.received agent=%s chars=%s preview=%s message=Gemini returned a response",
-            agent_name,
-            len(response_text),
-            _preview(response_text),
+            agent_name, len(response_text), _preview(response_text),
         )
         parsed = json.loads(response_text)
         output = output_schema.model_validate(parsed)
-        logger.info("flow.gemini.response.valid agent=%s schema=%s message=Gemini response passed schema validation", agent_name, output_schema.__name__)
+        logger.info("flow.gemini.response.valid agent=%s schema=%s message=Gemini response passed schema validation",
+                    agent_name, output_schema.__name__)
         return output
     except json.JSONDecodeError as exc:
         logger.exception("gemini.response.invalid_json agent=%s", agent_name)
@@ -71,34 +69,73 @@ def run_gemini_agent(agent_name, context, output_schema, instruction):
         raise GeminiAgentError(f"Gemini call failed for {agent_name}.") from exc
 
 
-def _build_prompt(context, output_schema, instruction):
+def audit_numbers(agent_name: str, texts: list[str], payload: dict) -> None:
+    """Log any number in the agent's Arabic text that does not exist in its input payload.
+
+    Log-only guardrail: the deterministic layer already owns every displayed
+    number; this catches an agent drifting into invented figures during demos.
+    """
+    allowed = _numbers_in(payload)
+    for text in texts:
+        for token in re.findall(r"\d[\d,\.]*", _normalize_digits(text or "")):
+            value = token.replace(",", "").rstrip(".")
+            # Small counts (days of a plan, list ordinals) are legitimate prose.
+            if not value or float(value) <= 90:
+                continue
+            if value not in allowed and str(int(float(value))) not in allowed:
+                logger.warning(
+                    "gemini.number_audit.mismatch agent=%s number=%s message=Number not found in agent input payload",
+                    agent_name, token,
+                )
+
+
+def _numbers_in(payload: dict) -> set[str]:
+    """Collect every numeric value in the payload as normalized strings."""
+    found: set[str] = set()
+
+    def walk(node) -> None:
+        if isinstance(node, bool):
+            return
+        if isinstance(node, (int, float)):
+            found.add(str(int(abs(node))))
+            found.add(str(abs(node)))
+        elif isinstance(node, dict):
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+        elif isinstance(node, str):
+            for token in re.findall(r"\d+", node):
+                found.add(token.lstrip("0") or "0")
+
+    walk(payload)
+    return found
+
+
+def _normalize_digits(text: str) -> str:
+    """Map Eastern Arabic numerals to Western so the audit sees one digit system."""
+    return text.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+
+
+def _build_prompt(payload: dict, output_schema: type[BaseModel], instruction: str) -> str:
     return (
-        "You are an Edraak responsible financial decision agent for a banking production workflow.\n"
-        "You must use Vertex AI Gemini output only for language, reasoning, and structured agent fields.\n"
-        "Use only the provided JSON context and calculated tool outputs.\n"
-        "Do not invent numbers.\n"
-        "Do not invent loans, transactions, income, balances, obligations, user profiles, or table rows.\n"
-        "Do not use sample data, mock data, assumptions, or placeholder values.\n"
-        "Do not read from decision_requests or recommendations; those tables are storage-only.\n"
-        "If required source data is missing or inconsistent, report it in the requested schema instead of filling gaps.\n"
-        "Return valid JSON only.\n"
-        "Do not use Markdown.\n"
+        "You are an Edraak agent inside a cross-bank financial safety product.\n"
+        "The deterministic Python layer computes every number; you understand messy data and communicate.\n"
+        "Use only the provided JSON payload. Do not invent numbers, transactions, loans, balances, or obligations.\n"
+        "Do not use sample data, assumptions, or placeholder values.\n"
+        "If required data is missing, say so inside the requested schema instead of filling gaps.\n"
+        "Return valid JSON only. Do not use Markdown.\n"
         "All user-facing text must be Arabic.\n\n"
         f"Role instruction:\n{instruction}\n\n"
-        "Input JSON context:\n"
-        f"{context.model_dump_json()}\n\n"
+        "Input JSON payload:\n"
+        f"{json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
         "Required output JSON schema:\n"
-        f"{_schema_for_prompt(output_schema)}"
+        f"{json.dumps(output_schema.model_json_schema(), ensure_ascii=False)}"
     )
 
 
-def _schema_for_prompt(output_schema):
-    if issubclass(output_schema, BaseModel):
-        return json.dumps(output_schema.model_json_schema(), ensure_ascii=False)
-    return "{}"
-
-
-def _preview(text, limit=1200):
+def _preview(text: str, limit: int = 1200) -> str:
     normalized = " ".join(text.split())
     if len(normalized) <= limit:
         return normalized

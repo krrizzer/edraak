@@ -75,6 +75,7 @@ resource "google_bigquery_table" "customers" {
   table_id            = "customers"
   deletion_protection = false
 
+  # current_balance was removed: balances now live per bank in the accounts table.
   schema = jsonencode([
     { name = "customer_id", type = "STRING", mode = "REQUIRED" },
     { name = "username_en", type = "STRING", mode = "REQUIRED" },
@@ -83,11 +84,31 @@ resource "google_bigquery_table" "customers" {
     { name = "national_id", type = "STRING", mode = "NULLABLE" },
     { name = "birthday", type = "DATE", mode = "NULLABLE" },
     { name = "salary", type = "FLOAT", mode = "NULLABLE" },
-    { name = "current_balance", type = "FLOAT", mode = "NULLABLE" },
     { name = "city", type = "STRING", mode = "NULLABLE" },
     { name = "employment_sector", type = "STRING", mode = "NULLABLE" },
     { name = "employer_name", type = "STRING", mode = "NULLABLE" },
     { name = "account_open_date", type = "DATE", mode = "NULLABLE" },
+    { name = "created_at", type = "TIMESTAMP", mode = "NULLABLE" },
+  ])
+}
+
+# Cross-bank accounts: one row per bank account the customer holds anywhere.
+# This table is what makes Edraak an Open Banking product instead of a single-bank tool.
+resource "google_bigquery_table" "accounts" {
+  project             = var.project_id
+  dataset_id          = google_bigquery_dataset.edraak.dataset_id
+  table_id            = "accounts"
+  deletion_protection = false
+
+  schema = jsonencode([
+    { name = "account_id", type = "STRING", mode = "REQUIRED" },
+    { name = "customer_id", type = "STRING", mode = "REQUIRED" },
+    { name = "bank_code", type = "STRING", mode = "NULLABLE" },
+    { name = "bank_name_ar", type = "STRING", mode = "NULLABLE" },
+    { name = "account_type", type = "STRING", mode = "NULLABLE" },
+    { name = "iban", type = "STRING", mode = "NULLABLE" },
+    { name = "balance", type = "FLOAT", mode = "NULLABLE" },
+    { name = "is_primary", type = "BOOLEAN", mode = "NULLABLE" },
     { name = "created_at", type = "TIMESTAMP", mode = "NULLABLE" },
   ])
 }
@@ -98,15 +119,20 @@ resource "google_bigquery_table" "transactions" {
   table_id            = "transactions"
   deletion_protection = false
 
+  # raw_description is the messy bank narrative string the Transaction Intelligence
+  # Agent reads. category stays but is intentionally unreliable/partial, like real
+  # cross-bank data. is_recurring was removed: recurrence is detected, not seeded.
   schema = jsonencode([
     { name = "transaction_id", type = "STRING", mode = "REQUIRED" },
     { name = "customer_id", type = "STRING", mode = "REQUIRED" },
+    { name = "account_id", type = "STRING", mode = "NULLABLE" },
+    { name = "bank_code", type = "STRING", mode = "NULLABLE" },
     { name = "transaction_date", type = "DATE", mode = "NULLABLE" },
     { name = "merchant", type = "STRING", mode = "NULLABLE" },
     { name = "category", type = "STRING", mode = "NULLABLE" },
+    { name = "raw_description", type = "STRING", mode = "NULLABLE" },
     { name = "amount", type = "FLOAT", mode = "NULLABLE" },
     { name = "transaction_type", type = "STRING", mode = "NULLABLE" },
-    { name = "is_recurring", type = "BOOLEAN", mode = "NULLABLE" },
     { name = "channel", type = "STRING", mode = "NULLABLE" },
     { name = "created_at", type = "TIMESTAMP", mode = "NULLABLE" },
   ])
@@ -118,19 +144,67 @@ resource "google_bigquery_table" "loans" {
   table_id            = "loans"
   deletion_protection = false
 
+  # bank_code: loans can exist at OTHER banks (the cross-bank story).
+  # remaining_months: critical for the forecast — a loan with remaining_months=1
+  # drops off the projection from month 2 onward.
   schema = jsonencode([
     { name = "loan_id", type = "STRING", mode = "REQUIRED" },
     { name = "customer_id", type = "STRING", mode = "REQUIRED" },
+    { name = "bank_code", type = "STRING", mode = "NULLABLE" },
     { name = "loan_type", type = "STRING", mode = "NULLABLE" },
     { name = "loan_total_amount", type = "FLOAT", mode = "NULLABLE" },
     { name = "total_profit_amount", type = "FLOAT", mode = "NULLABLE" },
     { name = "total_amount", type = "FLOAT", mode = "NULLABLE" },
     { name = "remaining_amount", type = "FLOAT", mode = "NULLABLE" },
     { name = "monthly_installment", type = "FLOAT", mode = "NULLABLE" },
+    { name = "remaining_months", type = "INTEGER", mode = "NULLABLE" },
+    { name = "first_installment_date", type = "DATE", mode = "NULLABLE" },
     { name = "start_date", type = "DATE", mode = "NULLABLE" },
     { name = "end_date", type = "DATE", mode = "NULLABLE" },
     { name = "status", type = "STRING", mode = "NULLABLE" },
     { name = "created_at", type = "TIMESTAMP", mode = "NULLABLE" },
+  ])
+}
+
+# Cache of Transaction Intelligence Agent output. Reused on analyze when fresh
+# so the demo does not re-run LLM classification on every request.
+resource "google_bigquery_table" "detected_obligations" {
+  project             = var.project_id
+  dataset_id          = google_bigquery_dataset.edraak.dataset_id
+  table_id            = "detected_obligations"
+  deletion_protection = false
+
+  schema = jsonencode([
+    { name = "customer_id", type = "STRING", mode = "REQUIRED" },
+    { name = "obligation_type", type = "STRING", mode = "NULLABLE" },
+    { name = "counterparty", type = "STRING", mode = "NULLABLE" },
+    { name = "monthly_amount", type = "FLOAT", mode = "NULLABLE" },
+    { name = "day_of_month", type = "INTEGER", mode = "NULLABLE" },
+    { name = "remaining_months", type = "INTEGER", mode = "NULLABLE" },
+    { name = "confidence", type = "FLOAT", mode = "NULLABLE" },
+    { name = "is_committed", type = "BOOLEAN", mode = "NULLABLE" },
+    { name = "source_bank_codes", type = "STRING", mode = "REPEATED" },
+    { name = "detected_at", type = "TIMESTAMP", mode = "NULLABLE" },
+  ])
+}
+
+# Storage-only radar alerts. Agents never read this table.
+resource "google_bigquery_table" "alerts" {
+  project             = var.project_id
+  dataset_id          = google_bigquery_dataset.edraak.dataset_id
+  table_id            = "alerts"
+  deletion_protection = false
+
+  schema = jsonencode([
+    { name = "alert_id", type = "STRING", mode = "REQUIRED" },
+    { name = "customer_id", type = "STRING", mode = "REQUIRED" },
+    { name = "created_at", type = "TIMESTAMP", mode = "NULLABLE" },
+    { name = "alert_type", type = "STRING", mode = "NULLABLE" },
+    { name = "gap_amount", type = "FLOAT", mode = "NULLABLE" },
+    { name = "gap_date", type = "DATE", mode = "NULLABLE" },
+    { name = "cause_category", type = "STRING", mode = "NULLABLE" },
+    { name = "message_ar", type = "STRING", mode = "NULLABLE" },
+    { name = "trajectory_json", type = "STRING", mode = "NULLABLE" },
   ])
 }
 
@@ -140,22 +214,23 @@ resource "google_bigquery_table" "user_profiles" {
   table_id            = "user_profiles"
   deletion_protection = false
 
+  # Cross-bank aggregates: totals span every account/loan the customer holds
+  # at any bank. Old single-bank prose fields were removed with the 5-agent flow.
   schema = jsonencode([
     { name = "customer_id", type = "STRING", mode = "REQUIRED" },
     { name = "ar_name", type = "STRING", mode = "NULLABLE" },
     { name = "en_name", type = "STRING", mode = "NULLABLE" },
     { name = "salary", type = "FLOAT", mode = "NULLABLE" },
-    { name = "current_balance", type = "FLOAT", mode = "NULLABLE" },
+    { name = "salary_day", type = "INTEGER", mode = "NULLABLE" },
+    { name = "salary_timing_variance_days", type = "FLOAT", mode = "NULLABLE" },
+    { name = "total_balance", type = "FLOAT", mode = "NULLABLE" },
+    { name = "banks_count", type = "INTEGER", mode = "NULLABLE" },
     { name = "active_loans_count", type = "INTEGER", mode = "NULLABLE" },
     { name = "total_remaining_loans", type = "FLOAT", mode = "NULLABLE" },
     { name = "monthly_loan_installments", type = "FLOAT", mode = "NULLABLE" },
     { name = "avg_monthly_spending", type = "FLOAT", mode = "NULLABLE" },
     { name = "avg_flexible_spending", type = "FLOAT", mode = "NULLABLE" },
-    { name = "recurring_obligations", type = "FLOAT", mode = "NULLABLE" },
-    { name = "savings_estimate", type = "FLOAT", mode = "NULLABLE" },
-    { name = "obligation_ratio", type = "FLOAT", mode = "NULLABLE" },
-    { name = "spending_behavior_summary_ar", type = "STRING", mode = "NULLABLE" },
-    { name = "risk_preference_estimate_ar", type = "STRING", mode = "NULLABLE" },
+    { name = "monthly_spending_std", type = "FLOAT", mode = "NULLABLE" },
     { name = "profile_generated_at", type = "TIMESTAMP", mode = "NULLABLE" },
   ])
 }
@@ -174,7 +249,6 @@ resource "google_bigquery_table" "decision_requests" {
     { name = "monthly_installment", type = "FLOAT", mode = "NULLABLE" },
     { name = "duration_months", type = "INTEGER", mode = "NULLABLE" },
     { name = "down_payment", type = "FLOAT", mode = "NULLABLE" },
-    { name = "urgency", type = "STRING", mode = "NULLABLE" },
     { name = "created_at", type = "TIMESTAMP", mode = "NULLABLE" },
   ])
 }
@@ -185,24 +259,26 @@ resource "google_bigquery_table" "recommendations" {
   table_id            = "recommendations"
   deletion_protection = false
 
+  # Snapshot columns replaced by forecast-curve columns after the reshape.
   schema = jsonencode([
     { name = "recommendation_id", type = "STRING", mode = "REQUIRED" },
     { name = "request_id", type = "STRING", mode = "NULLABLE" },
     { name = "customer_id", type = "STRING", mode = "NULLABLE" },
     { name = "recommendation", type = "STRING", mode = "NULLABLE" },
-    { name = "risk_score", type = "FLOAT", mode = "NULLABLE" },
-    { name = "safety_score", type = "FLOAT", mode = "NULLABLE" },
-    { name = "obligation_ratio_before", type = "FLOAT", mode = "NULLABLE" },
-    { name = "obligation_ratio_after", type = "FLOAT", mode = "NULLABLE" },
-    { name = "monthly_buffer_after", type = "FLOAT", mode = "NULLABLE" },
-    { name = "financial_seatbelt_status", type = "STRING", mode = "NULLABLE" },
-    { name = "confidence", type = "STRING", mode = "NULLABLE" },
+    { name = "ready_in_months", type = "INTEGER", mode = "NULLABLE" },
+    { name = "risk_probability", type = "FLOAT", mode = "NULLABLE" },
+    { name = "obligation_ratio_now", type = "FLOAT", mode = "NULLABLE" },
+    { name = "obligation_ratio_peak", type = "FLOAT", mode = "NULLABLE" },
+    { name = "first_shortfall_month", type = "INTEGER", mode = "NULLABLE" },
+    { name = "first_shortfall_amount", type = "FLOAT", mode = "NULLABLE" },
+    { name = "min_buffer_value", type = "FLOAT", mode = "NULLABLE" },
+    { name = "months_of_savings_cover", type = "FLOAT", mode = "NULLABLE" },
+    { name = "forecast_json", type = "STRING", mode = "NULLABLE" },
     { name = "validation_warnings_json", type = "STRING", mode = "NULLABLE" },
     { name = "explanation_ar", type = "STRING", mode = "NULLABLE" },
     { name = "risk_factors_json", type = "STRING", mode = "NULLABLE" },
     { name = "safer_options_json", type = "STRING", mode = "NULLABLE" },
-    { name = "readiness_path_json", type = "STRING", mode = "NULLABLE" },
-    { name = "agent_trace_json", type = "STRING", mode = "NULLABLE" },
+    { name = "step_trace_json", type = "STRING", mode = "NULLABLE" },
     { name = "created_at", type = "TIMESTAMP", mode = "NULLABLE" },
   ])
 }
@@ -254,13 +330,13 @@ resource "google_cloud_run_v2_service" "edraak" {
       }
 
       env {
-        name  = "USE_ADK"
-        value = "false"
+        name  = "USE_BIGQUERY"
+        value = "true"
       }
 
       env {
         name  = "USE_GEMINI"
-        value = "false"
+        value = "true"
       }
 
       env {

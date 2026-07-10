@@ -1,264 +1,146 @@
 # Edraak Cloud Run App
 
-Edraak is a Cloud Run-ready FastAPI + React prototype for an Agentic AI CFO / Financial Seatbelt. It helps a banking customer test whether a major financial commitment is safe before taking action.
+Edraak is a Cloud Run-ready FastAPI + React prototype for a cross-bank
+financial seatbelt on simulated SAMA Open Banking data. It sees the customer's
+accounts, loans, and raw transactions across ALL of their banks, simulates the
+next 12 months of cash flow, and communicates the result in Arabic.
 
-The app runs in production-style mode only: it reads customer data from BigQuery and uses Gemini 2.5 Flash-Lite through Vertex AI. It does not fall back to local mock data or static agent responses.
+The app runs in production-style mode only: it reads from BigQuery and uses
+Gemini 2.5 Flash-Lite through Vertex AI. There is no mock mode and no static
+fallback text.
 
-## Flow
+**Architecture principle:** the LLM understands messy data and communicates;
+deterministic Python computes every number. The LLM never invents or overrides
+a number.
+
+## Two Modes
+
+### Mode A — Decision Seatbelt (`POST /api/analyze`)
 
 ```text
 login
--> identify customer
--> collect customer data from customers, transactions, loans
--> read derived user_profiles
--> run deterministic financial tools
--> build strict AgentContext
--> run agents sequentially
--> save decision and recommendation if BigQuery is enabled
--> return stable response to UI
+-> load customers, accounts, transactions, loans across all banks
+-> validator                  (deterministic)
+-> transaction intelligence   (LLM, or fresh detected_obligations cache)
+-> profile builder            (deterministic, cross-bank aggregates)
+-> forecast engine            (deterministic, 12 months, remaining_months aware)
+-> risk model                 (scikit-learn, P(missed payment))
+-> verdict rules              (deterministic, curve rules + ready_in_months)
+-> decision advisor           (LLM, must echo the verdict exactly)
+-> store decision_requests + recommendations (storage only)
+-> respond with forecast rows, obligations by bank, advice, honest trace
 ```
 
-The user logs in with an English username such as `fahad`, `sara`, or `khalid`, then enters only the financial goal details.
-
-## Data Model
-
-Source banking tables:
-
-- `customers`
-- `transactions`
-- `loans`
-
-Derived analytical table:
-
-- `user_profiles`
-
-`user_profiles` is not an original bank table. It is generated from real BigQuery `customers`, `transactions`, and `loans`, then stored in BigQuery. If the row is missing during analysis, the backend generates it on demand, saves it to `user_profiles`, then continues the agent flow.
-
-The production loader is:
+### Mode B — Financial Radar (`POST /api/radar/trigger`)
 
 ```text
-app/functions/profile_loader.py
+radar detector (deterministic):
+  month-to-date pace per category vs trailing 3-month same-day-window baseline
+  projected balance at every upcoming committed payment date this month
+  gap -> amount, date, cause category (biggest positive deviation)
+-> intervention agent (LLM): ONE short actionable Arabic alert
+-> store in alerts (storage only) and return with the trajectory numbers
 ```
 
-It reads real BigQuery `customers`, `transactions`, and `loans`, calculates the derived profile, then inserts into `user_profiles`. The normal app flow can call the same calculation automatically when a profile is missing.
+In production the radar trigger would be a Cloud Scheduler job; the UI button
+simulates it.
 
-## Agents
-
-Agents live under `app/agents/`:
-
-- `schemas.py`: shared context and strict agent output schemas
-- `gemini_client.py`: Vertex AI Gemini JSON helper with strict schema validation
-- `root_agent.py`: explicit orchestration
-- `data_validation_agent.py`
-- `profile_agent.py`
-- `risk_agent.py`
-- `alternatives_agent.py`
-- `recommendation_agent.py`
-- `tools.py`
-
-The sequence is fixed:
-
-1. Data validation agent
-2. Profile agent
-3. Risk agent
-4. Alternatives agent
-5. Recommendation agent
-
-Each agent returns a Pydantic-validated schema. If Gemini is disabled, misconfigured, fails, or returns invalid JSON, the request fails. The app does not return deterministic/static agent text in production mode.
-
-## Calculations
-
-Python tools run before the agents:
-
-- obligation ratio before
-- obligation ratio after
-- monthly buffer after
-- risk score
-- safety score
-- deterministic recommendation
-
-Gemini is not trusted for calculations or data retrieval. It only writes Arabic summaries, explanations, risks, alternatives, readiness steps, and recommendation wording based on calculated values.
-
-## BigQuery
-
-`USE_BIGQUERY=true` is required. The app reads:
-
-- `customers`
-- `transactions`
-- `loans`
-- `user_profiles`
-
-The app writes only:
-
-- `decision_requests`
-- `recommendations`
-
-`decision_requests` and `recommendations` are storage-only tables. They are not read back into the agent flow.
-
-If BigQuery is unavailable, misconfigured, or fails to write, the request fails.
-
-## Logs
-
-When running locally, logs appear in the backend terminal running `python -m uvicorn app.main:app --reload --port 8080`.
-
-The main log categories are:
-
-- `edraak.api`: login, customer endpoints, analysis start/end, persistence
-- `edraak.bigquery`: BigQuery table reads/writes and row counts
-- `edraak.agents`: agent flow, tool outputs, validation status
-- `edraak.gemini`: Vertex AI Gemini calls, model/location, response preview, schema validation
-
-In Cloud Run, the same logs appear in the service logs.
-
-## Vertex AI Gemini
-
-Use Vertex AI only:
+## Project Layout
 
 ```text
-USE_GEMINI=true
-GCP_PROJECT_ID=YOUR_PROJECT_ID
-VERTEX_LOCATION=global
-GEMINI_MODEL=gemini-2.5-flash-lite
+app/
+  main.py                  # FastAPI routes only, thin
+  config.py                # env, table names, model path
+  pipeline.py              # step orchestration for both modes + honest trace
+  data/
+    bigquery_client.py     # ALL BigQuery reads/writes
+    seed/                  # demo data generator + loader (dates relative to today)
+  functions/               # deterministic layer, unit-tested
+    validator.py           # completeness/consistency checks (plain Python)
+    profile_builder.py     # cross-bank user_profiles row
+    forecast_engine.py     # 12-month projection (the brain)
+    verdict_rules.py       # curve rules; thresholds in one dict at the top
+    radar.py               # current-month gap detection
+    risk_model.py          # sklearn logistic regression; synthetic training data
+  agents/                  # the only LLM code
+    gemini_client.py       # Vertex AI calls + strict schema validation + number audit
+    schemas.py             # all Pydantic response schemas
+    transaction_intelligence.py
+    decision_advisor.py
+    intervention.py
+ui/                        # Vite + React (Arabic, RTL): mode select, chart, radar
+tests/                     # forecast/verdict/radar unit tests
 ```
 
-The app uses `google-genai` with `vertexai=True`. Do not use a Gemini API key path.
+## Data Rules
 
-## Run Locally On Windows
+- Source tables: `customers`, `accounts`, `transactions` (with the messy
+  `raw_description` the agent reads), `loans` (with `remaining_months`).
+- Derived: `user_profiles` (cross-bank aggregates), `detected_obligations`
+  (cache of agent output, reused while fresh — see
+  `OBLIGATION_CACHE_MAX_AGE_HOURS`).
+- Storage-only, never read by agents: `decision_requests`, `recommendations`,
+  `alerts`.
+- The Transaction Intelligence Agent must cite supporting transaction ids;
+  Python recomputes amount/day/banks from those rows and replaces any amount
+  off by more than 15%.
+- The Decision Advisor must return `recommendation` equal to the deterministic
+  verdict or the request fails with HTTP 502.
 
-Open VS Code at:
-
-```text
-C:\Users\yasse\Documents\github\edraak\cloud-run\edrak
-```
-
-### 1. Check Node.js And npm
-
-In a new VS Code terminal, run:
-
-```powershell
-node -v
-npm -v
-```
-
-If either command is not recognized, install Node.js LTS:
-
-```powershell
-winget install OpenJS.NodeJS.LTS
-```
-
-After installation, close VS Code completely, reopen it, and test again:
-
-```powershell
-node -v
-npm -v
-```
-
-### 2. Run Backend Locally
+## Run Locally
 
 ```bash
-cd cloud-run/edrak
 pip install -r app/requirements.txt
-python -m uvicorn app.main:app --reload --port 8080
+python -m app.functions.risk_model      # trains + saves the placeholder model
+export GCP_PROJECT_ID=your-project      # BigQuery + Vertex AI credentials required
+uvicorn app.main:app --reload --port 8080
 ```
 
-Health check:
+UI:
 
 ```bash
-curl http://localhost:8080/api/health
-```
-
-For Vertex AI Gemini local mode:
-
-```powershell
-$env:USE_BIGQUERY="true"
-$env:USE_GEMINI="true"
-$env:GCP_PROJECT_ID="YOUR_PROJECT_ID"
-$env:VERTEX_LOCATION="global"
-$env:GEMINI_MODEL="gemini-2.5-flash-lite"
-python -m uvicorn app.main:app --reload --port 8080
-```
-
-Keep this backend terminal running.
-
-Optional: pre-load derived user profiles before analysis:
-
-```powershell
-curl.exe -X POST http://localhost:8080/api/admin/load-user-profiles
-```
-
-Optional: pre-load one customer profile only:
-
-```powershell
-curl.exe -X POST http://localhost:8080/api/admin/load-user-profiles -H "Content-Type: application/json" -d "{\"customer_id\":\"CUST002\"}"
-```
-
-### 3. Run UI Locally
-
-Open a second VS Code terminal:
-
-```bash
-cd C:\Users\yasse\Documents\github\edraak\cloud-run\edrak\ui
+cd ui
 npm install
 npm run dev
 ```
 
-Open the URL printed by Vite, usually:
+Seed the demo data (dates are relative to the run day — reseed near demo day):
 
-```text
-http://localhost:5173
+```bash
+GCP_PROJECT_ID=your-project python -m app.data.seed.load_seed_data
 ```
 
-Login with:
+Tests:
 
-```text
-fahad
-sara
-khalid
+```bash
+pip install -r ../requirements-dev.txt   # or: pip install pytest
+python -m pytest tests/
 ```
 
-The Vite UI calls `http://localhost:8080` when running on port `5173`. In Docker and Cloud Run, API calls use same-origin requests.
+## Demo Users
+
+| user | story | expected outcome |
+|---|---|---|
+| `fahad` | healthy at Al Rajhi; SNB loan with 2 months left + 3 BNPL stacks + جمعية + family transfer at other banks | Mode A on 2,500/mo car → الأفضل تأجيله, ready in ~2 months |
+| `sara` | strong salary, one car loan, no BNPL | Mode A → قرار آمن |
+| `khalid` | salary day 1, cafe spending accelerating, 3,100 installment day 27 | Mode B radar → gap ≈ 340 SAR |
+| `noura` | 9,500 salary, rent + loan + 3 BNPL stacks, thin savings | Mode A → غير مناسب |
+
+Note: the radar demo needs the seed to be loaded before khalid's installment
+day (day 27 of the month); seeding on day 27+ shows the "belt secure" state.
 
 ## API
 
 - `GET /api/health`
-- `POST /api/login`
-- `POST /api/admin/load-user-profiles`
-- `GET /api/customer/{customer_id}`
-- `GET /api/customer/{customer_id}/profile`
-- `GET /api/customer/{customer_id}/transactions`
-- `GET /api/customer/{customer_id}/loans`
-- `POST /api/analyze`
+- `POST /api/login` — `{"username": "fahad"}`
+- `POST /api/analyze` — Mode A decision input
+- `POST /api/radar/trigger` — `{"customer_id": "CUST003"}`
+- `GET /api/alerts/{customer_id}`
 
-## Build With Docker
+## Deploy
 
 ```bash
-cd cloud-run/edrak
-docker build -t edraak-app .
-docker run -p 8080:8080 edraak-app
-```
-
-Open:
-
-```bash
-http://localhost:8080
-```
-
-## Deploy to Cloud Run
-
-```bash
-cd cloud-run/edrak
-
-gcloud run deploy edraak-app \
-  --source . \
-  --region me-central2 \
-  --allow-unauthenticated \
-  --set-env-vars USE_BIGQUERY=true,USE_GEMINI=true,GCP_PROJECT_ID=YOUR_PROJECT_ID,VERTEX_LOCATION=global,GEMINI_MODEL=gemini-2.5-flash-lite,BQ_DATASET=edraak_finance
-```
-
-Or use:
-
-```bash
-GCP_PROJECT_ID=YOUR_PROJECT_ID ./deploy.sh
+GCP_PROJECT_ID=your-project ./deploy.sh    # Cloud Run, me-central2 by default
 ```
 
 ## Environment Variables
@@ -268,16 +150,10 @@ PORT=8080
 USE_BIGQUERY=true
 USE_GEMINI=true
 GCP_PROJECT_ID=
+BQ_DATASET=edraak_finance
 VERTEX_LOCATION=global
 GEMINI_MODEL=gemini-2.5-flash-lite
-BQ_DATASET=edraak_finance
-BQ_CUSTOMERS_TABLE=customers
-BQ_TRANSACTIONS_TABLE=transactions
-BQ_LOANS_TABLE=loans
-BQ_USER_PROFILES_TABLE=user_profiles
-BQ_DECISION_REQUESTS_TABLE=decision_requests
-BQ_RECOMMENDATIONS_TABLE=recommendations
-VITE_API_BASE_URL=
+RISK_MODEL_PATH=                    # optional; default app/functions/models/risk_model.joblib
+OBLIGATION_CACHE_MAX_AGE_HOURS=24
+VITE_API_BASE_URL=                  # optional UI override
 ```
-
-The application path expects real BigQuery table data. Synthetic SQL files can still be used to seed a demo dataset, but the running app does not use in-code mock data.

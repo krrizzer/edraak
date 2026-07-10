@@ -1,1 +1,1 @@
-"""Utility functions for Edraak backend data and calculations."""
+"""Deterministic Python layer: validation, profiling, forecasting, verdicts, radar, and the risk model."""
