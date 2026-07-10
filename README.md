@@ -1,7 +1,25 @@
 # Edraak
 
-Edraak is a hackathon prototype for an agentic AI CFO: a "financial seatbelt" that helps people test large financial commitments before they make them. It currently focuses on decisions such as car financing, housing commitments, wedding costs, travel, debt payoff, and emergency financing.
+Edraak is a hackathon prototype for a **cross-bank financial seatbelt** built on
+simulated SAMA Open Banking data. It sees a customer's accounts, loans, BNPL
+stacks, and informal obligations across ALL of their banks, simulates the next
+12 months of cash flow month by month, and warns them — in Arabic — before a
+commitment or a spending pace gets them into trouble.
 
+Two modes after login:
+
+- **حزام الأمان المالي (Decision Seatbelt):** test a commitment before signing.
+  The forecast knows that a loan with 2 installments left stops costing money in
+  month 3 — so instead of a blanket "no" it can say
+  "ليس الآن — لكن بعد شهرين يصبح القرار آمنًا، وهذا هو السبب".
+- **الرادار المالي (Financial Radar):** current-month monitoring that projects
+  the balance at every upcoming installment date and fires one actionable alert:
+  "بناءً على وتيرة صرفك الحالية، ستنقصك 340 ريال عن قسط يوم 27 — تقليل مصروف
+  المقاهي هذا الأسبوع يغطي الفجوة."
+
+**Architecture principle:** the LLM understands messy data and communicates;
+deterministic Python computes every number. The LLM never invents or overrides
+a number.
 
 ## What Is In This Repository
 
@@ -9,44 +27,56 @@ Edraak is a hackathon prototype for an agentic AI CFO: a "financial seatbelt" th
 .
 |-- cloud-run/
 |   `-- edrak/
-|       |-- app/              # FastAPI backend, mock data, financial tools, agent orchestration
-|       |-- ui/               # Vite + React frontend
-|       |-- Dockerfile        # Builds the React UI and serves it from FastAPI
-|       |-- deploy.sh         # Source deploy to Google Cloud Run
-|       `-- README.md         # App-specific setup and API notes
-`-- infra/
-    |-- main.tf               # Google Cloud baseline infrastructure
-    |-- variables.tf          # Terraform configuration variables
-    |-- outputs.tf            # Terraform outputs
-    |-- versions.tf           # Terraform and provider constraints
-    `-- README.md             # Infrastructure-specific setup notes
+|       |-- app/              # FastAPI backend
+|       |   |-- main.py       #   thin routes
+|       |   |-- pipeline.py   #   Mode A / Mode B orchestration + honest trace
+|       |   |-- functions/    #   deterministic: forecast, verdict, radar, risk model
+|       |   |-- agents/       #   3 LLM agents on Vertex AI Gemini
+|       |   `-- data/         #   BigQuery client + seed generator
+|       |-- ui/               # Vite + React frontend (Arabic, RTL)
+|       |-- tests/            # unit tests for the deterministic layer
+|       |-- Dockerfile        # builds UI, trains risk model, serves from FastAPI
+|       `-- deploy.sh         # source deploy to Google Cloud Run
+|-- bigquery/                 # manual SQL setup (alternative to Terraform)
+`-- infra/                    # Terraform: BigQuery, Cloud Run SA, Artifact Registry
 ```
 
-## Product Flow
+## The Pipeline (Mode A)
 
-1. A user selects one of the synthetic financial profiles.
-2. The user enters a proposed commitment: goal type, goal amount, monthly installment, duration, down payment, and urgency.
-3. The backend calculates financial pressure signals such as obligation ratio, projected monthly buffer, risk score, and safety score.
-4. Mock specialist agents generate a profile summary, risk factors, safer alternatives, and a 30/60/90-day readiness path.
-5. The frontend presents the recommendation in Arabic with an agent trace and decision metrics.
+`validator → recurrence_detector (deterministic) → transaction_intelligence
+(LLM) → forecast_engine → risk_model → verdict_rules (deterministic) →
+decision_advisor (LLM)`
 
-## Architecture
+- **Recurrence Detector** (deterministic Python) finds *what* recurs — groups
+  of transactions with a consistent amount on a consistent day across months,
+  kept when they're isolated by amount (a rent nobody else matches) or carry a
+  real provider signal (`TABBY`, `SADAD`, `NETFLIX`).
+- **Transaction Intelligence Agent** only labels *what each group is* (جمعية vs
+  family transfer vs BNPL vs rent) from the messy narrative strings ("تمارا -
+  قسط 2 من 4", "POS TABBY* PAYMENT RUH"). Python owns every amount, day, and
+  bank, so the LLM can't invent a number; results are cached in
+  `detected_obligations`.
+- **Forecast Engine** projects income, committed outflow, buffer, obligation
+  ratio, and savings for the next 12 months, respecting `remaining_months` on
+  every loan and BNPL stack.
+- **Verdict Rules** decide قرار آمن / مقبول بحذر / الأفضل تأجيله / غير مناسب over
+  the curve, including `ready_in_months` when waiting fixes a temporary overlap.
+- **Risk Model** (scikit-learn, trained on synthetic data at build time) adds a
+  displayed `P(missed payment)` — it never decides the verdict.
+- **Decision Advisor Agent** writes the Arabic result and must echo the
+  deterministic verdict exactly, or the backend rejects it.
 
-- **Frontend:** Vite + React single-page app in `cloud-run/edrak/ui`.
-- **Backend:** FastAPI app in `cloud-run/edrak/app`.
-- **Mock data:** Synthetic customer profiles and transactions in `app/functions/mock_data.py`.
-- **Financial logic:** Obligation ratio, monthly buffer, risk score, recommendations, safer options, and readiness paths in `app/functions/financial_tools.py`.
-- **Agent layer:** Mock root orchestration and specialist agents in `app/agents`.
-- **Cloud runtime:** Docker builds the UI, copies the static output into FastAPI, and serves both the API and frontend on port `8080`.
-- **Infrastructure:** Terraform creates a small Google Cloud baseline for Cloud Run, Artifact Registry, BigQuery, Vertex AI readiness, IAM, Secret Manager placeholders, and logging.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for diagrams and details.
 
 ## Run Locally
 
-Run the backend:
+Run the backend (BigQuery + Vertex AI credentials required — one mode, no mocks):
 
 ```bash
 cd cloud-run/edrak
 pip install -r app/requirements.txt
+python -m app.functions.risk_model          # train the placeholder risk model once
+export GCP_PROJECT_ID=your-project
 uvicorn app.main:app --reload --port 8080
 ```
 
@@ -58,68 +88,76 @@ npm install
 npm run dev
 ```
 
-The local Vite UI calls `http://localhost:8080` by default when running on port `5173`. In Docker and Cloud Run, API calls use the same origin.
+The local Vite UI calls `http://localhost:8080` by default when running on port
+`5173`. In Docker and Cloud Run, API calls use the same origin.
+
+Run the tests:
+
+```bash
+cd cloud-run/edrak
+pip install -r requirements-dev.txt
+python -m pytest tests/
+```
+
+## Seed The Demo Data
+
+Seed dates are generated relative to the day you run the loader — that is what
+keeps the radar demo alive:
+
+```bash
+cd cloud-run/edrak
+GCP_PROJECT_ID=your-project python -m app.data.seed.load_seed_data
+```
+
+Demo users: `fahad` (the cross-bank hero → الأفضل تأجيله), `sara` (healthy →
+قرار آمن), `khalid` (radar customer → gap ≈ 340 SAR before the day-27
+installment), `noura` (overstretched → غير مناسب).
+
+## API Endpoints
+
+- `GET /api/health`
+- `POST /api/login` — `{"username": "fahad"}`
+- `POST /api/analyze` — Mode A (body below)
+- `POST /api/radar/trigger` — Mode B — `{"customer_id": "CUST003"}`
+- `GET /api/alerts/{customer_id}` — stored radar alerts
+
+The request body for `POST /api/analyze`:
+
+```json
+{
+  "customer_id": "CUST001",
+  "goal_type": "car",
+  "goal_amount": 120000,
+  "monthly_installment": 2500,
+  "duration_months": 48,
+  "down_payment": 10000
+}
+```
+
+The response includes the verdict, the 12 forecast rows with an uncertainty
+band (for the chart), first-shortfall info, the obligation-ratio curve summary,
+`risk_probability`, `ready_in_months`, detected obligations grouped by bank (the
+"ما لا يراه بنكك" panel), the Arabic explanation, risk factors and safer
+alternatives, validation warnings, and the honest step trace.
 
 ## Build With Docker
 
 ```bash
 cd cloud-run/edrak
 docker build -t edraak-app .
-docker run -p 8080:8080 edraak-app
-```
-
-Then open `http://localhost:8080`.
-
-## API Endpoints
-
-- `GET /api/health`
-- `GET /api/profiles`
-- `GET /api/transactions/{user_id}`
-- `POST /api/analyze`
-
-The request body for `POST /api/analyze` includes:
-
-```json
-{
-  "user_id": "stable",
-  "goal_type": "car",
-  "goal_amount": 120000,
-  "monthly_installment": 2500,
-  "duration_months": 48,
-  "down_payment": 10000,
-  "urgency": "medium"
-}
+docker run -p 8080:8080 -e GCP_PROJECT_ID=your-project edraak-app
 ```
 
 ## Deploy The App
 
-The application folder includes a Cloud Run source deployment script:
-
 ```bash
 cd cloud-run/edrak
-chmod +x deploy.sh
-./deploy.sh
+GCP_PROJECT_ID=your-project ./deploy.sh
 ```
 
-By default, it deploys the service as `edraak-app` in `me-central2`. Override the region with:
-
-```bash
-REGION=me-central2 ./deploy.sh
-```
+By default, it deploys the service as `edraak-app` in `me-central2`.
 
 ## Provision Google Cloud Infrastructure
-
-The Terraform layer in `infra/` creates the baseline resources the prototype is designed to use:
-
-- Required Google Cloud APIs
-- Cloud Run runtime service account
-- Minimal IAM permissions
-- BigQuery dataset and tables for profiles, transactions, decision requests, and recommendations
-- Artifact Registry Docker repository
-- Optional placeholder Cloud Run service
-- Optional Secret Manager secret containers
-
-Apply it with:
 
 ```bash
 cd infra
@@ -127,20 +165,22 @@ terraform init
 terraform apply -var-file=terraform.tfvars
 ```
 
-See `infra/README.md` for the full infrastructure notes and cost-conscious defaults.
+Terraform creates the BigQuery dataset and tables (`customers`, `accounts`,
+`transactions`, `loans`, `user_profiles`, `detected_obligations`,
+`decision_requests`, `recommendations`, `alerts`), the Cloud Run service
+account with minimal IAM, and the Artifact Registry repository. See
+`infra/README.md`.
 
 ## Environment Variables
 
-The app works in mock mode without setting these values, but they define the future integration points:
-
 ```text
 PORT=8080
-USE_ADK=false
-USE_GEMINI=false
+USE_BIGQUERY=true
+USE_GEMINI=true
 GCP_PROJECT_ID=
-BQ_DATASET=
-BQ_PROFILES_TABLE=
-BQ_TRANSACTIONS_TABLE=
-BQ_RECOMMENDATIONS_TABLE=
-VITE_API_BASE_URL=
+BQ_DATASET=edraak_finance
+VERTEX_LOCATION=global
+GEMINI_MODEL=gemini-2.5-flash-lite
+RISK_MODEL_PATH=            # optional; defaults to app/functions/models/risk_model.joblib
+VITE_API_BASE_URL=          # optional UI override
 ```

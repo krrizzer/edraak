@@ -3,8 +3,15 @@ set -e
 
 SERVICE_NAME="edraak-app"
 REGION="${REGION:-me-central2}"
+GCP_PROJECT_ID="${GCP_PROJECT_ID:-YOUR_PROJECT_ID}"
+USE_BIGQUERY="${USE_BIGQUERY:-true}"
+USE_GEMINI="${USE_GEMINI:-true}"
+VERTEX_LOCATION="${VERTEX_LOCATION:-global}"
+GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash-lite}"
+BQ_DATASET="${BQ_DATASET:-edraak_finance}"
 
 gcloud run deploy "$SERVICE_NAME" \
   --source . \
   --region "$REGION" \
-  --allow-unauthenticated
+  --allow-unauthenticated \
+  --set-env-vars "USE_BIGQUERY=$USE_BIGQUERY,USE_GEMINI=$USE_GEMINI,GCP_PROJECT_ID=$GCP_PROJECT_ID,VERTEX_LOCATION=$VERTEX_LOCATION,GEMINI_MODEL=$GEMINI_MODEL,BQ_DATASET=$BQ_DATASET"

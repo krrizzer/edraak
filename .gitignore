@@ -48,3 +48,6 @@ build/
 *.tmp
 *.bak
 ss.txt
+
+# Trained model artifacts (rebuilt at Docker build time)
+*.joblib

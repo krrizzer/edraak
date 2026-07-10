@@ -1,24 +1,31 @@
+"""FastAPI routes only — orchestration lives in app.pipeline, math in app.functions."""
+import logging
+import time
 from pathlib import Path
-from typing import Literal
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.agents.root_agent import run_edraak_agent
-from app.functions.bigquery_data import (
-    get_customer_by_id_from_bigquery,
-    get_customer_by_username_from_bigquery,
-    get_loans_from_bigquery,
-    get_transactions_from_bigquery,
-    get_user_profile_from_bigquery,
-    save_decision_request_to_bigquery,
-    save_recommendation_to_bigquery,
+from app import pipeline
+from app.agents.gemini_client import GeminiAgentError
+from app.data.bigquery_client import (
+    get_alerts,
+    get_customer_by_username,
+    save_decision_request,
+    save_recommendation,
 )
-from app.functions.load_user_profiles import build_user_profile, load_all_user_profiles
-from app.functions.mock_data import save_user_profile
+from app.functions.risk_model import predict_risk
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("edraak.api")
 
 
 class LoginInput(BaseModel):
@@ -32,10 +39,13 @@ class DecisionInput(BaseModel):
     monthly_installment: float = Field(..., gt=0)
     duration_months: int = Field(..., gt=0)
     down_payment: float = Field(0, ge=0)
-    urgency: Literal["low", "medium", "high"] = "medium"
 
 
-app = FastAPI(title="Edraak API", version="0.2.0")
+class RadarInput(BaseModel):
+    customer_id: str
+
+
+app = FastAPI(title="Edraak API", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,6 +61,24 @@ if assets_dir.exists():
     app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
 
+@app.on_event("startup")
+def warm_risk_model():
+    """Load the joblib risk model once so the first analyze call is not slower."""
+    predict_risk({})
+
+
+@app.exception_handler(GeminiAgentError)
+def gemini_agent_exception_handler(_request: Request, exc: GeminiAgentError):
+    logger.error("request.failed source=gemini error=%s", exc)
+    return JSONResponse(status_code=502, content={"detail": "Gemini agent failed", "error": str(exc)})
+
+
+@app.exception_handler(RuntimeError)
+def runtime_exception_handler(_request: Request, exc: RuntimeError):
+    logger.error("request.failed source=runtime error=%s", exc)
+    return JSONResponse(status_code=500, content={"detail": "Production configuration or storage failed", "error": str(exc)})
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "edraak"}
@@ -58,9 +86,17 @@ def health():
 
 @app.post("/api/login")
 def login(login_input: LoginInput):
-    customer = get_customer_by_username_from_bigquery(login_input.username)
+    request_id = _request_id()
+    start = time.perf_counter()
+    logger.info("flow.login.submitted request_id=%s username=%s message=User submitted login form", request_id, login_input.username)
+    customer = get_customer_by_username(login_input.username)
     if not customer:
+        logger.warning("flow.login.failed request_id=%s username=%s reason=not_found message=No customer found for username", request_id, login_input.username)
         raise HTTPException(status_code=404, detail="Username not found")
+    logger.info(
+        "flow.login.success request_id=%s customer_id=%s elapsed_ms=%s message=Login matched username to customer record",
+        request_id, customer["customer_id"], _elapsed_ms(start),
+    )
     return {
         "customer_id": customer["customer_id"],
         "username_en": customer["username_en"],
@@ -69,72 +105,59 @@ def login(login_input: LoginInput):
     }
 
 
-@app.post("/api/admin/load-user-profiles")
-def load_user_profiles():
-    profiles = load_all_user_profiles()
-    return {"status": "completed", "profiles_loaded": len(profiles)}
-
-
-@app.get("/api/customer/{customer_id}")
-def get_customer(customer_id: str):
-    customer = get_customer_by_id_from_bigquery(customer_id)
-    if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
-    return customer
-
-
-@app.get("/api/customer/{customer_id}/transactions")
-def get_customer_transactions(customer_id: str):
-    if not get_customer_by_id_from_bigquery(customer_id):
-        raise HTTPException(status_code=404, detail="Customer not found")
-    return get_transactions_from_bigquery(customer_id)
-
-
-@app.get("/api/customer/{customer_id}/loans")
-def get_customer_loans(customer_id: str):
-    if not get_customer_by_id_from_bigquery(customer_id):
-        raise HTTPException(status_code=404, detail="Customer not found")
-    return get_loans_from_bigquery(customer_id)
-
-
-@app.get("/api/customer/{customer_id}/profile")
-def get_customer_profile(customer_id: str):
-    customer = get_customer_by_id_from_bigquery(customer_id)
-    if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
-
-    profile = get_user_profile_from_bigquery(customer_id)
-    if profile:
-        return profile
-
-    transactions = get_transactions_from_bigquery(customer_id)
-    loans = get_loans_from_bigquery(customer_id)
-    profile = build_user_profile(customer, transactions, loans)
-    save_user_profile(profile)
-    return profile
-
-
 @app.post("/api/analyze")
 def analyze(decision_input: DecisionInput):
+    request_id = _request_id()
+    start = time.perf_counter()
     decision = decision_input.model_dump()
-
-    # Data collection happens before any agent runs.
-    customer = get_customer_by_id_from_bigquery(decision_input.customer_id)
-    if not customer:
+    logger.info(
+        "flow.analysis.clicked request_id=%s customer_id=%s goal_type=%s amount=%s installment=%s message=User submitted financial goal; starting Mode A pipeline",
+        request_id, decision_input.customer_id, decision_input.goal_type,
+        decision_input.goal_amount, decision_input.monthly_installment,
+    )
+    try:
+        result = pipeline.run_analysis(decision)
+    except LookupError:
         raise HTTPException(status_code=404, detail="Customer not found")
+    except ValueError as exc:
+        logger.warning("analyze.validation_failed request_id=%s error=%s", request_id, exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    transactions = get_transactions_from_bigquery(decision_input.customer_id)
-    loans = get_loans_from_bigquery(decision_input.customer_id)
-    profile = get_user_profile_from_bigquery(decision_input.customer_id)
-    if not profile:
-        profile = build_user_profile(customer, transactions, loans)
-        save_user_profile(profile)
-
-    save_decision_request_to_bigquery(decision)
-
-    result = run_edraak_agent(customer, transactions, loans, profile, decision)
-    save_recommendation_to_bigquery(result)
+    logger.info("flow.analysis.storage.start request_id=%s message=Saving request and recommendation to storage-only tables", request_id)
+    save_decision_request({**decision, "request_id": request_id})
+    save_recommendation({**result, "request_id": request_id})
+    logger.info(
+        "flow.analysis.completed request_id=%s recommendation=%s elapsed_ms=%s message=Analysis response returned to UI",
+        request_id, result["recommendation"], _elapsed_ms(start),
+    )
     return result
+
+
+@app.post("/api/radar/trigger")
+def radar_trigger(radar_input: RadarInput):
+    request_id = _request_id()
+    start = time.perf_counter()
+    logger.info(
+        "flow.radar.triggered request_id=%s customer_id=%s message=Radar check requested (simulates the scheduled end-of-month job)",
+        request_id, radar_input.customer_id,
+    )
+    try:
+        result = pipeline.run_radar_check(radar_input.customer_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    logger.info(
+        "flow.radar.responded request_id=%s has_gap=%s elapsed_ms=%s message=Radar result returned to UI",
+        request_id, result["has_gap"], _elapsed_ms(start),
+    )
+    return result
+
+
+@app.get("/api/alerts/{customer_id}")
+def list_alerts(customer_id: str):
+    logger.info("flow.alerts.list customer_id=%s message=Loading stored radar alerts for UI", customer_id)
+    return get_alerts(customer_id)
 
 
 @app.get("/{path:path}")
@@ -148,4 +171,12 @@ def serve_react_app(path: str):
         return FileResponse(requested_file)
     if index_file.exists():
         return FileResponse(index_file)
-    return {"service": "edraak", "ui": "not built"}
+    raise HTTPException(status_code=404, detail="UI build not found")
+
+
+def _request_id():
+    return uuid4().hex[:10]
+
+
+def _elapsed_ms(start):
+    return round((time.perf_counter() - start) * 1000)
