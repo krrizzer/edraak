@@ -17,6 +17,9 @@ CATEGORY_LABELS_AR = {
     "entertainment": "الترفيه",
     "fuel": "الوقود",
     "transport": "المواصلات",
+    "misc": "متفرقات",
+    "housing": "السكن",
+    "bills": "الفواتير",
     "uncategorized": "غير مصنف",
 }
 
@@ -30,44 +33,116 @@ MIN_BASELINE_FOR_CAUSE = 50
 
 def run_radar(profile: dict, accounts: list[dict], transactions: list[dict],
               loans: list[dict], obligations: list[dict], today: date | None = None) -> dict:
-    """Project the current month and detect a gap before any committed payment date."""
+    """Project the current month against a real budget and detect trouble early.
+
+    Two detections, in priority order:
+      1. installment_gap — the projected balance can't cover a committed payment date.
+      2. overspend — no payment fails, but the spending pace drives the SPENDABLE
+         balance below zero before the month ends (usually before salary day).
+    Savings accounts are a reserve, not a budget — they are reported separately
+    and never counted as spendable.
+    """
     today = today or date.today()
-    balance_now = sum(float(a.get("balance") or 0) for a in accounts)
+    spendable = sum(float(a.get("balance") or 0) for a in accounts
+                    if a.get("account_type", "current") != "savings")
+    savings_reserve = sum(float(a.get("balance") or 0) for a in accounts
+                          if a.get("account_type") == "savings")
     flexible = _flexible_expenses(transactions, obligations, loans)
     categories = _category_pace(flexible, today)
     daily_pace = _daily_pace(flexible, today)
     payments = _upcoming_payments(obligations, loans, today)
     salary_day, salary = _pending_salary(profile, transactions, today)
 
-    gap = _find_gap(balance_now, daily_pace, payments, salary_day, salary, today)
-    days_in_month = monthrange(today.year, today.month)[1]
-    projected_eom = round(
-        balance_now
-        + (salary if salary_day else 0)
-        - sum(p["amount"] for p in payments)
-        - daily_pace * (days_in_month - today.day)
-    )
+    gap = _find_gap(spendable, daily_pace, payments, salary_day, salary, today)
+    trough, projected_eom = _project_month(spendable, daily_pace, payments, salary_day, salary, today)
+    flexible_budget = round(float(profile.get("avg_flexible_spending") or 0))
+    flexible_used = round(_mtd_total(flexible, today))
+    committed_month = round(sum(p["amount"] for p in payments))
+    cause = _cause_category(categories)
+    suggested_cuts = _suggested_cuts(categories, trough, today)
+
+    if gap is not None:
+        alert_type = "installment_gap"
+    elif trough["amount"] < 0:
+        alert_type = "overspend"
+    else:
+        alert_type = "on_track"
 
     trajectory = {
         "as_of": today.isoformat(),
-        "balance_now": round(balance_now),
+        "balance_now": round(spendable),
+        "savings_reserve": round(savings_reserve),
+        "monthly_budget": flexible_budget + committed_month,
+        "flexible_budget": flexible_budget,
+        "flexible_used_mtd": flexible_used,
+        "budget_used_pct": round(flexible_used / flexible_budget * 100) if flexible_budget > 0 else 0,
         "daily_flexible_pace": round(daily_pace),
         "projected_eom_balance": projected_eom,
+        "projected_trough": trough,
         "expected_salary_day": salary_day,
         "categories": categories,
         "upcoming_payments": payments,
+        "suggested_cuts": suggested_cuts,
     }
     logger.info(
-        "flow.radar.detection customer_id=%s gap=%s pace=%s payments=%s message=Radar trajectory computed",
-        profile.get("customer_id"), bool(gap), round(daily_pace), len(payments),
+        "flow.radar.detection customer_id=%s alert_type=%s pace=%s trough=%s payments=%s message=Radar trajectory computed",
+        profile.get("customer_id"), alert_type, round(daily_pace), trough["amount"], len(payments),
     )
     return {
         "has_gap": gap is not None,
-        "gap_amount": gap["amount"] if gap else None,
-        "gap_date": gap["date"] if gap else None,
-        "cause_category": _cause_category(categories) if gap else None,
+        "alert_type": alert_type,
+        "gap_amount": gap["amount"] if gap else (abs(trough["amount"]) if alert_type == "overspend" else None),
+        "gap_date": gap["date"] if gap else (trough["date"] if alert_type == "overspend" else None),
+        "cause_category": cause if alert_type != "on_track" else None,
         "trajectory": trajectory,
     }
+
+
+def _project_month(spendable: float, daily_pace: float, payments: list[dict],
+                   salary_day: int | None, salary: float, today: date) -> tuple[dict, int]:
+    """Simulate the spendable balance day by day to month end; return (trough, eom)."""
+    days_in_month = monthrange(today.year, today.month)[1]
+    balance = spendable
+    lowest = {"amount": round(balance), "date": today.isoformat()}
+    for day in range(today.day + 1, days_in_month + 1):
+        balance -= daily_pace
+        if salary_day is not None and day == salary_day:
+            balance += salary
+        balance -= sum(p["amount"] for p in payments if p["day"] == day)
+        if balance < lowest["amount"]:
+            lowest = {"amount": round(balance), "date": date(today.year, today.month, day).isoformat()}
+    return lowest, round(balance)
+
+
+def _mtd_total(flexible: list[dict], today: date) -> float:
+    """Total flexible spend so far this month."""
+    current = today.isoformat()[:7]
+    return sum(abs(float(t.get("amount") or 0)) for t in flexible
+               if str(t.get("transaction_date", "")).startswith(current))
+
+
+def _suggested_cuts(categories: list[dict], trough: dict, today: date) -> list[dict]:
+    """Deterministic advice input: which accelerating categories can cover the shortfall.
+
+    For each category spending above its baseline, the recoverable amount is the
+    excess pace projected over the remaining days. The agent phrases the advice;
+    these numbers are Python's.
+    """
+    shortfall = max(-trough["amount"], 0)
+    if shortfall == 0:
+        return []
+    days_left = monthrange(today.year, today.month)[1] - today.day
+    elapsed = max(today.day, 1)
+    cuts = []
+    for row in categories:
+        if row["deviation_pct"] <= 0 or row["baseline_mtd"] < MIN_BASELINE_FOR_CAUSE:
+            continue
+        excess_daily = (row["mtd"] - row["baseline_mtd"]) / elapsed
+        recoverable = round(excess_daily * days_left)
+        if recoverable > 0:
+            cuts.append({"category": row["category"], "label_ar": row["label_ar"],
+                         "recoverable": recoverable})
+    return sorted(cuts, key=lambda c: -c["recoverable"])[:3]
 
 
 def _flexible_expenses(transactions: list[dict], obligations: list[dict], loans: list[dict]) -> list[dict]:

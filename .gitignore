@@ -51,3 +51,14 @@ ss.txt
 
 # Trained model artifacts (rebuilt at Docker build time)
 *.joblib
+
+# Flutter
+**/.dart_tool/
+**/build/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/*.g.dart
+cloud-run/edrak/ui/.packages
+
+# Mock gateway local consent store
+cloud-run/mock-bank/consents_store.json

@@ -26,17 +26,21 @@ a number.
 ```text
 .
 |-- cloud-run/
-|   `-- edrak/
-|       |-- app/              # FastAPI backend
-|       |   |-- main.py       #   thin routes
-|       |   |-- pipeline.py   #   Mode A / Mode B orchestration + honest trace
-|       |   |-- functions/    #   deterministic: forecast, verdict, radar, risk model
-|       |   |-- agents/       #   3 LLM agents on Vertex AI Gemini
-|       |   `-- data/         #   BigQuery client + seed generator
-|       |-- ui/               # Vite + React frontend (Arabic, RTL)
-|       |-- tests/            # unit tests for the deterministic layer
-|       |-- Dockerfile        # builds UI, trains risk model, serves from FastAPI
-|       `-- deploy.sh         # source deploy to Google Cloud Run
+|   |-- edrak/                # THE PRODUCT (Cloud Run service #1)
+|   |   |-- app/              #   FastAPI backend
+|   |   |   |-- main.py       #     thin routes
+|   |   |   |-- pipeline.py   #     Mode A / Mode B orchestration + honest trace
+|   |   |   |-- functions/    #     deterministic: forecast, verdict, radar, risk, completeness
+|   |   |   |-- agents/       #     3 LLM agents on Vertex AI Gemini
+|   |   |   `-- data/         #     BigQuery client, ingestion pipeline, seed generator
+|   |   |-- ui/               #   Flutter web app (Arabic, RTL, Alinma-inspired)
+|   |   |-- tests/            #   unit tests for the deterministic layer
+|   |   |-- Dockerfile        #   builds Flutter web, trains risk model, serves from FastAPI
+|   |   `-- deploy.sh         #   source deploy to Google Cloud Run
+|   `-- mock-bank/            # MOCK KSAOB GATEWAY (Cloud Run service #2)
+|       |-- main.py           #   consent-gated AIS API + bank-side approval screen
+|       |-- bank_cores.py     #   the banks' data, in RAM (never BigQuery)
+|       `-- generate_seed_data.py  # shared generator (kept in sync with edrak's)
 |-- bigquery/                 # manual SQL setup (alternative to Terraform)
 `-- infra/                    # Terraform: BigQuery, Cloud Run SA, Artifact Registry
 ```
@@ -70,26 +74,40 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for diagrams and details.
 
 ## Run Locally
 
-Run the backend (BigQuery + Vertex AI credentials required — one mode, no mocks):
+The system is **two backend services + a Flutter app**, so a full local run uses
+three terminals. See [RUNNING.md](RUNNING.md) for the complete guide; the short
+version:
+
+**Terminal 1 — the mock KSAOB gateway** (plays the banks; no BigQuery):
+
+```bash
+cd cloud-run/mock-bank
+pip install -r requirements.txt
+python -m uvicorn main:app --reload --port 8081
+# Swagger (the API page): http://localhost:8081/docs
+```
+
+**Terminal 2 — the Edraak backend** (BigQuery + Vertex AI credentials required):
 
 ```bash
 cd cloud-run/edrak
 pip install -r app/requirements.txt
-python -m app.functions.risk_model          # train the placeholder risk model once
+python -m app.functions.risk_model                 # train the placeholder risk model once
 export GCP_PROJECT_ID=your-project
-uvicorn app.main:app --reload --port 8080
+export OPENBANKING_GATEWAY_URL=http://localhost:8081
+python -m app.data.seed.load_seed_data             # seed FIRST-PARTY data only
+python -m uvicorn app.main:app --reload --port 8080
 ```
 
-Run the UI in another terminal:
+**Terminal 3 — the Flutter app** (needs the Flutter SDK: https://docs.flutter.dev/get-started/install):
 
 ```bash
 cd cloud-run/edrak/ui
-npm install
-npm run dev
+flutter pub get
+flutter run -d chrome \
+  --dart-define=API_BASE=http://localhost:8080 \
+  --dart-define=GATEWAY_BASE=http://localhost:8081
 ```
-
-The local Vite UI calls `http://localhost:8080` by default when running on port
-`5173`. In Docker and Cloud Run, API calls use the same origin.
 
 Run the tests:
 
@@ -101,25 +119,45 @@ python -m pytest tests/
 
 ## Seed The Demo Data
 
-Seed dates are generated relative to the day you run the loader — that is what
-keeps the radar demo alive:
+The seeder loads **only first-party data** into BigQuery — each customer's home
+bank, plus `customers` and `loans` (a bureau-style feed). Every *other* bank's
+accounts and transactions live in the gateway's memory until the in-app consent
+flow pulls them. Seed dates are relative to the run day (keeps the radar alive):
 
 ```bash
 cd cloud-run/edrak
 GCP_PROJECT_ID=your-project python -m app.data.seed.load_seed_data
 ```
 
-Demo users: `fahad` (the cross-bank hero → الأفضل تأجيله), `sara` (healthy →
-قرار آمن), `khalid` (radar customer → gap ≈ 340 SAR before the day-27
-installment), `noura` (overstretched → غير مناسب).
+Demo users: `fahad` (the cross-bank hero → الأفضل تأجيله after linking his other
+banks), `sara` (healthy → قرار آمن), `khalid` (radar customer → gap ≈ 340 SAR
+before the day-27 installment), `noura` (overstretched → غير مناسب).
+
+The strongest demo beat: analyze `fahad` **before** linking — he looks healthy at
+Al Rajhi. Then link SNB + Riyad through the consent flow (the coverage card even
+tells you SNB is missing, from the bureau loan) and re-analyze — the hidden BNPL
+stacks and other-bank loan surface, and the verdict flips.
 
 ## API Endpoints
 
+Edraak backend:
+
 - `GET /api/health`
+- `GET /api/ui-config` — runtime config for the app (the gateway URL)
 - `POST /api/login` — `{"username": "fahad"}`
+- `GET /api/coverage/{customer_id}` — is the linked data enough? which banks to add?
+- `POST /api/ingest` — `{"customer_id","bank_code","consent_id"}` — pull a consented bank
+- `GET /api/consents/{customer_id}` — linked-account consents
 - `POST /api/analyze` — Mode A (body below)
 - `POST /api/radar/trigger` — Mode B — `{"customer_id": "CUST003"}`
 - `GET /api/alerts/{customer_id}` — stored radar alerts
+
+Mock KSAOB gateway (separate service, port 8081):
+
+- `GET /docs` — the interactive API page (Swagger)
+- `POST /{bank}/open-banking/v1/consents` → `GET/POST /{bank}/authorize` (approval)
+- `GET /{bank}/open-banking/v1/accounts | .../balances | .../transactions` (consent-gated)
+- `DELETE /{bank}/open-banking/v1/consents/{id}` — revoke
 
 The request body for `POST /api/analyze`:
 

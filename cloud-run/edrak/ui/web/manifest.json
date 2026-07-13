@@ -1,0 +1,14 @@
+{
+  "name": "إدراك",
+  "short_name": "إدراك",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#06121a",
+  "theme_color": "#06121a",
+  "description": "حزام الأمان المالي عبر البنوك",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "icons/Amad.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

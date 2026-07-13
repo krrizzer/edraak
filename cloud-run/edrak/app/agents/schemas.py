@@ -55,3 +55,11 @@ class InterventionOutput(BaseModel):
     title_ar: str
     message_ar: str
     trace_message_ar: str
+
+
+class SufficiencyOutput(BaseModel):
+    """The LLM's judgment on whether the linked data forms a complete financial picture."""
+    looks_complete: bool
+    confidence: float = Field(ge=0, le=1)
+    findings_ar: list[str] = []
+    trace_message_ar: str

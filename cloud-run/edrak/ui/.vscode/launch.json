@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Edraak — Chrome (local)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "chrome",
+      "args": [
+        "--dart-define=API_BASE=http://localhost:8080",
+        "--dart-define=GATEWAY_BASE=http://localhost:8091"
+      ]
+    }
+  ]
+}

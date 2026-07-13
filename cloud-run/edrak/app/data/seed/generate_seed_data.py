@@ -1,4 +1,12 @@
-"""Generate synthetic cross-bank demo data with realistically messy transaction descriptions."""
+"""Generate synthetic cross-bank demo data with realistically messy transaction descriptions.
+
+Bank layout per customer (mirrors real life):
+  - HOST bank = ALINMA: the salary account, rent, and daily spending. Seeded into BigQuery.
+  - TWO main external banks: carry the story — loans, BNPL stacks, jamiya. Linking
+    these two is what changes the analysis.
+  - Remaining banks: noise — tiny balances and a handful of small transactions
+    that add nothing, exactly like most people's forgotten accounts.
+"""
 import random
 from calendar import monthrange
 from datetime import date, datetime, timezone
@@ -8,7 +16,10 @@ from datetime import date, datetime, timezone
 # the data is loaded. Six full months of history plus the current month-to-date.
 HISTORY_MONTHS = 6
 
+HOST_BANK = "ALINMA"
+
 BANKS = {
+    "ALINMA": "مصرف الإنماء",
     "ALRAJHI": "مصرف الراجحي",
     "SNB": "البنك الأهلي السعودي",
     "RIYAD": "بنك الرياض",
@@ -26,6 +37,7 @@ def generate_all(today: date | None = None) -> dict[str, list[dict]]:
     for spec in specs:
         rows = _render_transactions(spec, today, rng)
         _tune_radar_balance(spec, today, rows)
+        _tune_trough_balance(spec, today, rows)
         for row in rows:
             row.pop("_flex", None)
         customers.append(spec["customer"])
@@ -41,178 +53,207 @@ def generate_all(today: date | None = None) -> dict[str, list[dict]]:
 
 
 def _fahad_spec() -> dict:
-    """Demo hero: healthy at his primary bank, stretched across the other banks."""
+    """Mode A hero: healthy at Alinma; SNB and Riyad carry a loan tail + BNPL stacks."""
     return {
-        "customer": _customer("CUST001", "fahad", "فهد ", "Fahad Alotaibi", "1000000001",
+        "customer": _customer("CUST001", "fahad", "فهد", "Fahad", "1000000001",
                               date(1990, 4, 12), 16500, "Riyadh", "Private", "Najd Logistics Co."),
         "accounts": [
-            _account("ACC001-RAJ", "CUST001", "ALRAJHI", "current", 22400, True),
-            _account("ACC001-RAJS", "CUST001", "ALRAJHI", "savings", 8100, False),
+            _account("ACC001-INM", "CUST001", "ALINMA", "current", 22400, True),
+            _account("ACC001-INMS", "CUST001", "ALINMA", "savings", 8100, False),
             _account("ACC001-SNB", "CUST001", "SNB", "current", 3850, False),
             _account("ACC001-RYD", "CUST001", "RIYAD", "current", 2300, False),
+            _account("ACC001-RAJ", "CUST001", "ALRAJHI", "current", 620, False),
+            _account("ACC001-SAB", "CUST001", "SAB", "current", 340, False),
         ],
         # Personal loan at ANOTHER bank with 2 installments left: the forecast must
-        # drop it from month 3 — the one-time DBR check at his primary bank never sees it.
+        # drop it from month 3 — a one-time single-bank DBR check never sees it.
         "loans": [
             {"loan_id": "LN001", "bank_code": "SNB", "loan_type": "personal", "total": 79200,
              "installment": 2200, "remaining_months": 2, "months_paid": 34, "day": 27},
         ],
-        "salary": {"amount": 16500, "day": 25, "bank": "ALRAJHI",
+        "salary": {"amount": 16500, "day": 25, "bank": "ALINMA",
                    # Two late months in history: the salary-timing variance signal.
                    "day_overrides": {3: 29, 5: 28},
                    "descs": ["MUDAD PAYROLL NAJD LOGISTICS", "حوالة راتب - مداد", "SALARY TRF NAJD LOG CO"]},
         "recurring": [
-            _item("rent", "ALRAJHI", 3, -4500, ["SADAD RENT EJAR PLATFORM", "ايجار - منصة إيجار"], None, "housing"),
-            _item("jamiya", "RIYAD", 5, -1000, ["حوالة داخلية - جمعية شهر {hijri}", "حوالة - جمعية الحي"], None, None),
-            _item("family", "ALRAJHI", 26, -1500, ["TRF TO ABU FAHAD 0501XXXXXX", "حوالة الى ابو فهد"], None, "transfer"),
+            _item("rent", "ALINMA", 3, -4500, ["SADAD RENT EJAR PLATFORM", "ايجار - منصة إيجار"], None, "housing"),
+            _item("family", "ALINMA", 26, -1500, ["حوالة صادرة - ابو فهد", "TRF TO ABU FAHAD 0501XXXXXX"], None, "transfer"),
+            _item("netflix", "ALINMA", 8, -65, ["NETFLIX.COM AMSTERDAM NL"], "Netflix", "subscription"),
+            _item("stc", "ALINMA", 10, -320, ["SADAD BILL - STC", "سداد - فاتورة STC"], "STC", None, jitter=0.05),
+            _item("kahraba", "ALINMA", 15, -280, ["SADAD BILL - KAHRABA", "سداد - شركة الكهرباء"], None, "bills", jitter=0.2),
             _item("loan_snb", "SNB", 27, -2200, ["SNB PERSONAL FIN INSTALLMENT {n2}/36", "قسط تمويل شخصي - الاهلي"], None, None,
                   months_paid=34),
             _item("tabby1", "SNB", 12, -450, ["POS TABBY* PAYMENT RUH", "TABBY *INSTALMENT {n} OF 4"], None, None,
                   bnpl_total=4, bnpl_paid=2),
+            _item("jamiya", "RIYAD", 5, -1000, ["حوالة داخلية - جمعية شهر {hijri}", "حوالة - جمعية الحي"], None, None),
             _item("tamara", "RIYAD", 18, -380, ["تمارا - قسط {n} من 4", "TAMARA PAYMENT RYD"], None, None,
                   bnpl_total=4, bnpl_paid=2),
             _item("tabby2", "RIYAD", 20, -300, ["TABBY *{n} OF 6 INSTAL", "POS TABBY PAYMENT"], None, None,
                   bnpl_total=6, bnpl_paid=3),
-            _item("netflix", "ALRAJHI", 8, -65, ["NETFLIX.COM AMSTERDAM NL"], "Netflix", "subscription"),
-            _item("stc", "ALRAJHI", 10, -320, ["SADAD BILL - STC", "سداد - فاتورة STC"], "STC", None, jitter=0.05),
-            _item("kahraba", "ALRAJHI", 15, -280, ["SADAD BILL - KAHRABA", "سداد - شركة الكهرباء"], None, "bills", jitter=0.2),
         ],
         "flexible": {
-            "groceries": {"monthly": 1200, "count": 5, "bank": "ALRAJHI",
+            "groceries": {"monthly": 1200, "count": 5, "bank": "ALINMA",
                           "descs": ["POS PANDA RETAIL RIYADH", "POS TAMIMI MARKETS 112", "POS OTHAIM MRKT"]},
-            "cafes": {"monthly": 550, "count": 7, "bank": "ALRAJHI",
+            "cafes": {"monthly": 550, "count": 7, "bank": "ALINMA",
                       "descs": ["POS BARNS COFFEE 4421 RIYADH", "POS HALF MILLION RUH", "مقهى دوز - رياض"]},
-            "restaurants": {"monthly": 800, "count": 5, "bank": "ALRAJHI",
+            "restaurants": {"monthly": 800, "count": 5, "bank": "ALINMA",
                             "descs": ["POS ALBAIK KHURAIS RD", "HUNGERSTATION RIYADH", "POS SHAWARMA HOUSE"]},
+            "entertainment": {"monthly": 300, "count": 2, "bank": "ALINMA",
+                              "descs": ["VOX CINEMAS RIYADH FRONT", "POS PLAYSTATION NETWORK"]},
             "fuel": {"monthly": 450, "count": 4, "bank": "SNB",
                      "descs": ["POS SASCO FUEL 0091", "POS ALDREES PETROL"]},
             "shopping": {"monthly": 900, "count": 3, "bank": "RIYAD",
                          "descs": ["POS AMAZON.SA RETAIL", "POS EXTRA STORES RUH", "POS ZARA GRANADA MALL"]},
-            "entertainment": {"monthly": 300, "count": 2, "bank": "ALRAJHI",
-                              "descs": ["VOX CINEMAS RIYADH FRONT", "POS PLAYSTATION NETWORK"]},
+            # Noise banks: a forgotten account each, a few tiny charges a month.
+            "transport": {"monthly": 55, "count": 1, "bank": "ALRAJHI",
+                          "descs": ["UBER TRIP HELP.UBER.COM", "POS CAREEM RIDE"]},
+            "misc": {"monthly": 40, "count": 1, "bank": "SAB",
+                     "descs": ["POS NAHDI PHARMACY 233", "POS WHSMITH KKIA"]},
         },
         "current_month_pace": {},
     }
 
 
 def _sara_spec() -> dict:
-    """Healthy customer: strong salary, one loan, no BNPL — the go-ahead case."""
+    """Healthy customer: strong salary, one host-bank car loan, no BNPL — the safe case."""
     return {
-        "customer": _customer("CUST002", "sara", "سارة ", "Sara Alharbi", "1000000002",
+        "customer": _customer("CUST002", "sara", "سارة", "Sara", "1000000002",
                               date(1988, 11, 20), 22000, "Jeddah", "Government", "Ministry Entity"),
         "accounts": [
-            _account("ACC002-RAJ", "CUST002", "ALRAJHI", "current", 54000, True),
-            _account("ACC002-RAJS", "CUST002", "ALRAJHI", "savings", 35000, False),
-            _account("ACC002-SAB", "CUST002", "SAB", "current", 4200, False),
+            _account("ACC002-INM", "CUST002", "ALINMA", "current", 54000, True),
+            _account("ACC002-INMS", "CUST002", "ALINMA", "savings", 35000, False),
+            _account("ACC002-RAJ", "CUST002", "ALRAJHI", "current", 4200, False),
+            _account("ACC002-SAB", "CUST002", "SAB", "current", 2100, False),
+            _account("ACC002-SNB", "CUST002", "SNB", "current", 310, False),
+            _account("ACC002-RYD", "CUST002", "RIYAD", "current", 260, False),
         ],
         "loans": [
-            {"loan_id": "LN002", "bank_code": "ALRAJHI", "loan_type": "car", "total": 76800,
+            {"loan_id": "LN002", "bank_code": "ALINMA", "loan_type": "car", "total": 76800,
              "installment": 1600, "remaining_months": 14, "months_paid": 34, "day": 5},
         ],
-        "salary": {"amount": 22000, "day": 25, "bank": "ALRAJHI", "day_overrides": {},
+        "salary": {"amount": 22000, "day": 25, "bank": "ALINMA", "day_overrides": {},
                    "descs": ["MUDAD PAYROLL MOF ENTITY", "حوالة راتب حكومي"]},
         "recurring": [
-            _item("loan_raj", "ALRAJHI", 5, -1600, ["ALRAJHI AUTO FIN INSTALLMENT", "قسط تمويل سيارة - الراجحي"], None, None,
+            _item("loan_inm", "ALINMA", 5, -1600, ["ALINMA AUTO FIN INSTALLMENT {n2}/48", "قسط تمويل سيارة - الإنماء"], None, None,
                   months_paid=34),
-            _item("stc", "ALRAJHI", 10, -250, ["SADAD BILL - STC"], "STC", "bills", jitter=0.05),
-            _item("shahid", "ALRAJHI", 6, -28, ["SHAHID VIP SUBSCRIPTION"], "Shahid", "subscription"),
-            _item("kahraba", "ALRAJHI", 15, -220, ["SADAD BILL - KAHRABA"], None, "bills", jitter=0.2),
+            _item("stc", "ALINMA", 10, -250, ["SADAD BILL - STC"], "STC", "bills", jitter=0.05),
+            _item("shahid", "ALINMA", 6, -28, ["SHAHID VIP SUBSCRIPTION"], "Shahid", "subscription"),
+            _item("kahraba", "ALINMA", 15, -220, ["SADAD BILL - KAHRABA"], None, "bills", jitter=0.2),
         ],
         "flexible": {
-            "groceries": {"monthly": 1400, "count": 5, "bank": "ALRAJHI",
+            "groceries": {"monthly": 1400, "count": 5, "bank": "ALINMA",
                           "descs": ["POS DANUBE JEDDAH 12", "POS TAMIMI MARKETS JED"]},
-            "cafes": {"monthly": 420, "count": 5, "bank": "ALRAJHI",
+            "cafes": {"monthly": 420, "count": 5, "bank": "ALINMA",
                       "descs": ["POS BREW92 JEDDAH", "مقهى الغيمة - جدة"]},
-            "restaurants": {"monthly": 950, "count": 4, "bank": "ALRAJHI",
+            "restaurants": {"monthly": 950, "count": 4, "bank": "ALINMA",
                             "descs": ["POS ALROMANSIAH JED", "HUNGERSTATION JEDDAH"]},
-            "shopping": {"monthly": 1300, "count": 3, "bank": "SAB",
+            "shopping": {"monthly": 1300, "count": 3, "bank": "ALRAJHI",
                          "descs": ["POS AMAZON.SA RETAIL", "POS RED SEA MALL STORE"]},
-            "fuel": {"monthly": 380, "count": 3, "bank": "ALRAJHI", "descs": ["POS ALDREES PETROL JED"]},
-            "entertainment": {"monthly": 350, "count": 2, "bank": "ALRAJHI", "descs": ["VOX CINEMAS RED SEA MALL"]},
+            "fuel": {"monthly": 380, "count": 3, "bank": "SAB", "descs": ["POS ALDREES PETROL JED"]},
+            "entertainment": {"monthly": 350, "count": 2, "bank": "ALINMA", "descs": ["VOX CINEMAS RED SEA MALL"]},
+            "transport": {"monthly": 45, "count": 1, "bank": "SNB", "descs": ["UBER TRIP HELP.UBER.COM"]},
+            "misc": {"monthly": 35, "count": 1, "bank": "RIYAD", "descs": ["POS NAHDI PHARMACY JED"]},
         },
         "current_month_pace": {},
     }
 
 
 def _khalid_spec() -> dict:
-    """Radar customer: current-month cafe spending pace is on course to miss the loan installment."""
+    """Radar customer: host-bank installment on day 27, cafe pace accelerating this month."""
     return {
-        "customer": _customer("CUST003", "khalid", "خالد ", "Khalid Alshehri", "1000000003",
+        "customer": _customer("CUST003", "khalid", "خالد", "Khalid", "1000000003",
                               date(1994, 2, 5), 14500, "Dammam", "Private", "Eastern Services Ltd."),
         "accounts": [
-            _account("ACC003-RAJ", "CUST003", "ALRAJHI", "current", 4850, True),
+            _account("ACC003-INM", "CUST003", "ALINMA", "current", 4850, True),
             _account("ACC003-SNB", "CUST003", "SNB", "current", 1150, False),
+            _account("ACC003-RYD", "CUST003", "RIYAD", "current", 780, False),
+            _account("ACC003-RAJ", "CUST003", "ALRAJHI", "current", 160, False),
+            _account("ACC003-SAB", "CUST003", "SAB", "current", 90, False),
         ],
+        # The radar's day-27 installment sits at the HOST bank so Mode B works
+        # right after login, before any linking.
         "loans": [
-            {"loan_id": "LN003", "bank_code": "RIYAD", "loan_type": "car", "total": 111600,
+            {"loan_id": "LN003", "bank_code": "ALINMA", "loan_type": "car", "total": 111600,
              "installment": 3100, "remaining_months": 22, "months_paid": 14, "day": 27},
         ],
         # Salary on day 1: already received this month, so overspending eats real balance.
-        "salary": {"amount": 14500, "day": 1, "bank": "ALRAJHI", "day_overrides": {},
+        "salary": {"amount": 14500, "day": 1, "bank": "ALINMA", "day_overrides": {},
                    "descs": ["MUDAD PAYROLL EASTERN SVCS", "حوالة راتب"]},
         "recurring": [
-            _item("rent", "ALRAJHI", 2, -3800, ["SADAD RENT EJAR PLATFORM", "ايجار شقة - العزيزية"], None, "housing"),
-            _item("loan_ryd", "RIYAD", 27, -3100, ["RIYAD BANK AUTO INSTALLMENT {n2}/36", "قسط سيارة - بنك الرياض"], None, None,
+            _item("rent", "ALINMA", 2, -3800, ["SADAD RENT EJAR PLATFORM", "ايجار شقة - العزيزية"], None, "housing"),
+            _item("loan_inm", "ALINMA", 27, -3100, ["ALINMA AUTO FIN INSTALLMENT {n2}/36", "قسط سيارة - الإنماء"], None, None,
                   months_paid=14),
+            _item("stc", "ALINMA", 10, -300, ["SADAD BILL - STC"], "STC", "bills", jitter=0.05),
             _item("tabby", "SNB", 21, -220, ["POS TABBY* PAYMENT DMM", "TABBY *{n} OF 4 INSTAL"], None, None,
                   bnpl_total=4, bnpl_paid=1),
-            _item("stc", "ALRAJHI", 10, -300, ["SADAD BILL - STC"], "STC", "bills", jitter=0.05),
         ],
         "flexible": {
-            "groceries": {"monthly": 900, "count": 4, "bank": "ALRAJHI",
+            "groceries": {"monthly": 900, "count": 4, "bank": "ALINMA",
                           "descs": ["POS PANDA RETAIL DAMMAM", "POS OTHAIM MRKT DMM"]},
-            "cafes": {"monthly": 480, "count": 10, "bank": "ALRAJHI",
+            "cafes": {"monthly": 480, "count": 10, "bank": "ALINMA",
                       "descs": ["POS BARNS COFFEE 1180 DMM", "POS RAVE COFFEE KHOBAR", "مقهى سكرة - الدمام"]},
-            "restaurants": {"monthly": 750, "count": 5, "bank": "ALRAJHI",
+            "restaurants": {"monthly": 750, "count": 5, "bank": "ALINMA",
                             "descs": ["POS HERFY KHOBAR", "JAHEZ ORDER DAMMAM", "POS MAESTRO PIZZA"]},
+            "entertainment": {"monthly": 250, "count": 2, "bank": "ALINMA", "descs": ["POS PLAYSTATION NETWORK"]},
             "fuel": {"monthly": 420, "count": 4, "bank": "SNB", "descs": ["POS SASCO FUEL DMM"]},
-            "entertainment": {"monthly": 250, "count": 2, "bank": "ALRAJHI", "descs": ["POS PLAYSTATION NETWORK"]},
+            "shopping": {"monthly": 180, "count": 2, "bank": "RIYAD", "descs": ["POS AMAZON.SA RETAIL"]},
+            "transport": {"monthly": 40, "count": 1, "bank": "ALRAJHI", "descs": ["UBER TRIP HELP.UBER.COM"]},
+            "misc": {"monthly": 30, "count": 1, "bank": "SAB", "descs": ["POS NAHDI PHARMACY DMM"]},
         },
         # Current-month acceleration: cafes more than doubled, restaurants slightly up.
         # This is what the radar's pace math must catch.
         "current_month_pace": {"cafes": 2.2, "restaurants": 1.15},
-        # The generator derives the primary balance so the projected gap before the
-        # loan installment lands near this value whatever day the data is seeded.
+        # The generator derives the host balance so the projected gap before the
+        # day-27 installment lands near this value whatever day the data is seeded.
         "radar_gap_target": 340,
     }
 
 
 def _noura_spec() -> dict:
-    """Overstretched customer: three BNPL stacks, thin savings — the avoid case."""
+    """Overstretched customer: loan + three BNPL stacks across SNB/Al Rajhi — the avoid case."""
     return {
-        "customer": _customer("CUST004", "noura", "نورة ", "Noura Alqahtani", "1000000004",
+        "customer": _customer("CUST004", "noura", "نورة", "Noura", "1000000004",
                               date(1997, 8, 30), 9500, "Riyadh", "Private", "Retail Group Co."),
         "accounts": [
-            _account("ACC004-SNB", "CUST004", "SNB", "current", 2100, True),
-            _account("ACC004-RAJ", "CUST004", "ALRAJHI", "current", 600, False),
+            _account("ACC004-INM", "CUST004", "ALINMA", "current", 2100, True),
+            _account("ACC004-SNB", "CUST004", "SNB", "current", 600, False),
+            _account("ACC004-RAJ", "CUST004", "ALRAJHI", "current", 350, False),
+            _account("ACC004-RYD", "CUST004", "RIYAD", "current", 120, False),
+            _account("ACC004-SAB", "CUST004", "SAB", "current", 80, False),
         ],
         "loans": [
             {"loan_id": "LN004", "bank_code": "SNB", "loan_type": "personal", "total": 68400,
              "installment": 1900, "remaining_months": 18, "months_paid": 18, "day": 5},
         ],
-        "salary": {"amount": 9500, "day": 25, "bank": "SNB", "day_overrides": {},
+        "salary": {"amount": 9500, "day": 25, "bank": "ALINMA", "day_overrides": {},
                    "descs": ["MUDAD PAYROLL RETAIL GROUP", "حوالة راتب"]},
         "recurring": [
-            _item("rent", "SNB", 3, -3500, ["SADAD RENT EJAR PLATFORM", "ايجار استوديو - النرجس"], None, "housing"),
+            _item("rent", "ALINMA", 3, -3500, ["SADAD RENT EJAR PLATFORM", "ايجار استوديو - النرجس"], None, "housing"),
+            _item("stc", "ALINMA", 10, -250, ["SADAD BILL - STC"], "STC", "bills", jitter=0.05),
             _item("loan_snb", "SNB", 5, -1900, ["SNB PERSONAL FIN INSTALLMENT {n2}/36"], None, None, months_paid=18),
-            _item("jamiya", "ALRAJHI", 7, -500, ["حوالة - جمعية زميلات العمل"], None, None),
             _item("tabby1", "SNB", 9, -350, ["POS TABBY* PAYMENT RUH", "TABBY *{n} OF 6 INSTAL"], None, None,
                   bnpl_total=6, bnpl_paid=2),
-            _item("tamara", "ALRAJHI", 14, -280, ["تمارا - قسط {n} من 4"], None, None,
-                  bnpl_total=4, bnpl_paid=1),
             _item("tabby2", "SNB", 19, -190, ["TABBY *{n} OF 4 INSTAL", "POS TABBY PAYMENT"], None, None,
                   bnpl_total=4, bnpl_paid=2),
-            _item("stc", "SNB", 10, -250, ["SADAD BILL - STC"], "STC", "bills", jitter=0.05),
+            _item("jamiya", "ALRAJHI", 7, -500, ["حوالة - جمعية زميلات العمل"], None, None),
+            _item("tamara", "ALRAJHI", 14, -280, ["تمارا - قسط {n} من 4"], None, None,
+                  bnpl_total=4, bnpl_paid=1),
         ],
         "flexible": {
-            "groceries": {"monthly": 700, "count": 4, "bank": "SNB", "descs": ["POS PANDA RETAIL RIYADH"]},
-            "cafes": {"monthly": 380, "count": 6, "bank": "SNB",
+            "groceries": {"monthly": 700, "count": 4, "bank": "ALINMA", "descs": ["POS PANDA RETAIL RIYADH"]},
+            "cafes": {"monthly": 380, "count": 6, "bank": "ALINMA",
                       "descs": ["POS HALF MILLION RUH", "مقهى نص مليون"]},
             "restaurants": {"monthly": 600, "count": 4, "bank": "SNB", "descs": ["HUNGERSTATION RIYADH"]},
             "shopping": {"monthly": 520, "count": 3, "bank": "ALRAJHI",
                          "descs": ["POS SHEIN.COM", "POS NAMSHI GENERAL TRADING"]},
+            "transport": {"monthly": 50, "count": 1, "bank": "RIYAD", "descs": ["UBER TRIP HELP.UBER.COM"]},
+            "misc": {"monthly": 25, "count": 1, "bank": "SAB", "descs": ["POS NAHDI PHARMACY 411"]},
         },
-        "current_month_pace": {},
+        # The OVERSPEND radar case: no installment fails, but cafes + groceries are
+        # running hot enough that the spendable balance dips below zero before her
+        # day-25 salary — the radar should say what to cut to make it through.
+        "current_month_pace": {"cafes": 2.4, "groceries": 1.7},
+        "radar_trough_target": 260,
     }
 
 
@@ -265,36 +306,73 @@ def _item(key: str, bank: str, day: int, amount: float, descs: list[str],
 
 
 def _tune_radar_balance(spec: dict, today: date, rows: list[dict]) -> None:
-    """Derive the radar customer's primary balance so the demo gap is stable.
+    """Derive the radar customer's host balance so the demo gap is stable.
 
-    The radar demo must fire whatever day the data is seeded, so the balance is
-    computed backwards from the loan installment date using the SAME pace math
-    the radar runs over the actually rendered month-to-date transactions.
+    Uses HOST-bank items only, because the radar must fire before any external
+    bank is linked. Post-linking, external installments only widen the gap.
     Seeding on/after the installment day leaves the balance as-is (belt-secure demo).
     """
     target = spec.get("radar_gap_target")
     if not target:
         return
-    loan = spec["loans"][0]
+    host = next(a["bank_code"] for a in spec["accounts"] if a["is_primary"])
+    loan = next(l for l in spec["loans"] if l["bank_code"] == host)
     if today.day >= loan["day"]:
         return
     current_month = today.isoformat()[:7]
     mtd_flexible = sum(
         abs(row["amount"]) for row in rows
-        if row.get("_flex") and str(row["transaction_date"]).startswith(current_month)
+        if row.get("_flex") and row["bank_code"] == host
+        and str(row["transaction_date"]).startswith(current_month)
     )
     pace = mtd_flexible / today.day if today.day >= 3 and mtd_flexible else sum(
         plan["monthly"] * spec["current_month_pace"].get(category, 1.0)
-        for category, plan in spec["flexible"].items()
+        for category, plan in spec["flexible"].items() if plan["bank"] == host
     ) / 30
     upcoming = sum(
         -item["amount"] for item in spec["recurring"]
-        if today.day < item["day"] < loan["day"] and _item_active(item, 0)
+        if item["bank"] == host and today.day < item["day"] < loan["day"] and _item_active(item, 0)
     )
     needed = loan["installment"] - target + pace * (loan["day"] - today.day) + upcoming
     primary = next(a for a in spec["accounts"] if a["is_primary"])
-    others = sum(a["balance"] for a in spec["accounts"] if not a["is_primary"])
+    others = sum(a["balance"] for a in spec["accounts"]
+                 if not a["is_primary"] and a["bank_code"] == host)
     primary["balance"] = max(round(needed - others), 500)
+
+
+def _tune_trough_balance(spec: dict, today: date, rows: list[dict]) -> None:
+    """Derive the overspend customer's host balance so the pre-salary dip is stable.
+
+    Sets the spendable balance so that, at the measured spending pace, the balance
+    crosses about -target shortly before salary day — the radar's overspend case.
+    Seeding on/after salary day leaves the balance as-is (on-track demo instead).
+    """
+    target = spec.get("radar_trough_target")
+    if not target:
+        return
+    host = next(a["bank_code"] for a in spec["accounts"] if a["is_primary"])
+    salary_day = spec["salary"]["day"]
+    if today.day >= salary_day:
+        return
+    current_month = today.isoformat()[:7]
+    mtd_flexible = sum(
+        abs(row["amount"]) for row in rows
+        if row.get("_flex") and row["bank_code"] == host
+        and str(row["transaction_date"]).startswith(current_month)
+    )
+    pace = mtd_flexible / today.day if today.day >= 3 and mtd_flexible else sum(
+        plan["monthly"] * spec["current_month_pace"].get(category, 1.0)
+        for category, plan in spec["flexible"].items() if plan["bank"] == host
+    ) / 30
+    upcoming = sum(
+        -item["amount"] for item in spec["recurring"]
+        if item["bank"] == host and today.day < item["day"] < salary_day and _item_active(item, 0)
+    )
+    needed = pace * (salary_day - today.day) + upcoming - target
+    primary = next(a for a in spec["accounts"] if a["is_primary"])
+    others = sum(a["balance"] for a in spec["accounts"]
+                 if not a["is_primary"] and a["bank_code"] == host)
+    primary["balance"] = max(round(needed - others), 100)
 
 
 def _render_loans(spec: dict, today: date) -> list[dict]:

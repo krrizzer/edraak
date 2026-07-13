@@ -140,7 +140,11 @@ def get_fresh_detected_obligations(customer_id: str) -> list[dict]:
 
 
 def save_detected_obligations(customer_id: str, obligations: list[dict]) -> None:
-    """Store one batch of Transaction Intelligence output as the new cache."""
+    """Store one batch of Transaction Intelligence output as the new cache.
+
+    Written with a LOAD JOB (not streaming) so clear_detected_obligations can
+    DELETE these rows immediately — streaming-buffered rows can't be deleted.
+    """
     detected_at = datetime.now(timezone.utc).isoformat()
     rows = [
         {
@@ -158,7 +162,18 @@ def save_detected_obligations(customer_id: str, obligations: list[dict]) -> None
         for item in obligations
     ]
     if rows:
-        _insert_rows("detected_obligations", rows)
+        _load_rows("detected_obligations", rows).result()
+
+
+def clear_detected_obligations(customer_id: str) -> None:
+    """Invalidate the obligations cache — required after ingesting a new bank,
+    or the analyzer would keep reusing a classification that never saw it."""
+    require_bigquery()
+    _client().query(
+        f"DELETE FROM `{config.bq_table('detected_obligations')}` WHERE customer_id = @customer_id",
+        job_config=_scalar_params([("customer_id", customer_id)]),
+    ).result()
+    logger.info("flow.ingest.obligations_cache.cleared customer_id=%s", customer_id)
 
 
 def save_decision_request(payload: dict) -> str:
@@ -224,6 +239,104 @@ def get_alerts(customer_id: str) -> list[dict]:
     )
 
 
+def get_connected_banks(customer_id: str) -> list[str]:
+    """Distinct bank codes we currently hold data for (host bank + any ingested banks)."""
+    rows = _query_many(
+        f"""
+        SELECT DISTINCT bank_code
+        FROM `{config.bq_table("accounts")}`
+        WHERE customer_id = @customer_id AND bank_code IS NOT NULL
+        """,
+        [("customer_id", customer_id)],
+        "accounts",
+    )
+    return sorted(r["bank_code"] for r in rows if r.get("bank_code"))
+
+
+def save_consent(consent: dict) -> None:
+    """Record one consent in the TPP-side ledger."""
+    _insert_rows("ob_consents", [consent])
+
+
+def get_consents(customer_id: str) -> list[dict]:
+    """List the customer's consents for the UI (linked accounts management)."""
+    return _query_many(
+        f"""
+        SELECT consent_id, customer_id, bank_code, status, permissions,
+               created_at, expires_at, revoked_at
+        FROM `{config.bq_table("ob_consents")}`
+        WHERE customer_id = @customer_id
+        ORDER BY created_at DESC
+        """,
+        [("customer_id", customer_id)],
+        "ob_consents",
+    )
+
+
+def save_raw_payloads(rows: list[dict]) -> None:
+    """Land a batch of raw KSAOB payloads in the bronze layer, as received."""
+    if rows:
+        _insert_rows("ob_raw_payloads", rows)
+
+
+def ingest_silver(customer_id: str, bank_code: str, tables: dict[str, list[dict]],
+                  already_linked: bool) -> None:
+    """Land one bank's pulled rows in the silver tables, fast.
+
+    First link (the common case): the bank has no rows yet, so everything goes in
+    via streaming inserts — sub-second, no DELETE needed. Re-link: delete the old
+    rows first (one scripted job); if that fails because the previous rows are
+    still in the streaming buffer, skip the rewrite — the generator is
+    deterministic, so the rows already there are identical anyway.
+    """
+    require_bigquery()
+    if already_linked:
+        script = "\n".join(
+            f"DELETE FROM `{config.bq_table(name)}` WHERE customer_id = @customer_id AND bank_code = @bank_code;"
+            for name in tables
+        )
+        try:
+            _client().query(script, job_config=_scalar_params(
+                [("customer_id", customer_id), ("bank_code", bank_code)])).result()
+        except Exception:
+            logger.warning("flow.ingest.silver.rewrite_skipped customer_id=%s bank=%s message=Previous rows still in streaming buffer; identical data already present",
+                           customer_id, bank_code)
+            return
+    for name, rows in tables.items():
+        if rows:
+            _insert_rows(name, rows)
+    logger.info("flow.ingest.silver.landed customer_id=%s bank=%s relinked=%s",
+                customer_id, bank_code, already_linked)
+
+
+def _load_rows(table_name: str, rows: list[dict]) -> "object":
+    """Start a load-job append (immediately deletable, unlike streaming). Returns the job."""
+    from google.cloud import bigquery
+
+    table_id = config.bq_table(table_name)
+    job_config = bigquery.LoadJobConfig(
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        schema=_schema(table_id),
+    )
+    try:
+        job = _client().load_table_from_json(rows, table_id, job_config=job_config)
+    except Exception:
+        logger.exception("bigquery.load.failed table=%s", table_name)
+        raise RuntimeError(f"BigQuery load failed for {table_name}.")
+    logger.info("bigquery.load.started table=%s rows=%s", table_name, len(rows))
+    return job
+
+
+
+
+def _scalar_params(params: list[tuple]):
+    from google.cloud import bigquery
+
+    return bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter(name, "STRING", value) for name, value in params
+    ])
+
+
 def require_bigquery() -> None:
     """Fail fast when BigQuery production mode is not configured."""
     if not config.use_bigquery():
@@ -232,10 +345,26 @@ def require_bigquery() -> None:
         raise RuntimeError("GCP_PROJECT_ID is required for BigQuery production mode.")
 
 
-def _client():
-    from google.cloud import bigquery
+# One client (and its auth handshake) per process — recreating it per query was
+# costing seconds on every single call and dominated page-load and ingest times.
+_CLIENT = None
+_SCHEMAS: dict[str, list] = {}
 
-    return bigquery.Client(project=config.gcp_project_id())
+
+def _client():
+    global _CLIENT
+    if _CLIENT is None:
+        from google.cloud import bigquery
+
+        _CLIENT = bigquery.Client(project=config.gcp_project_id())
+    return _CLIENT
+
+
+def _schema(table_id: str):
+    """Cache table schemas — load jobs need them and they never change mid-run."""
+    if table_id not in _SCHEMAS:
+        _SCHEMAS[table_id] = _client().get_table(table_id).schema
+    return _SCHEMAS[table_id]
 
 
 def _query_one(sql: str, params: list[tuple], table_name: str) -> dict | None:

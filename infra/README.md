@@ -137,7 +137,7 @@ Adjust region, dataset name, Cloud Run public access, or optional secrets only i
 
 ```bash
 terraform init
-terraform apply -var-file=terraform.tfvars
+terraform apply -var-file="terraform.tfvars"
 ```
 
 ## Destroy
@@ -154,7 +154,7 @@ Terraform creates the baseline infrastructure. The actual app deployment can hap
 gcloud run deploy edraak-app --source ../cloud-run/edrak --region me-central2
 ```
 
-That command replaces the placeholder Cloud Run sample container with the real Edraak FastAPI + React application.
+That command replaces the placeholder Cloud Run sample container with the real Edraak FastAPI + Flutter application. Deploy the mock gateway (`cloud-run/mock-bank`) as a second Cloud Run service and set `OPENBANKING_GATEWAY_URL` on the app.
 
 If Terraform created the placeholder Cloud Run service, a future `terraform apply` may try to return it to the sample image. For a hackathon flow, use Terraform for baseline infra and use `gcloud run deploy` for app releases, or later add a real image variable to Terraform when you want Terraform to manage releases too.
 

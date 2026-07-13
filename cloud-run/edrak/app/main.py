@@ -1,8 +1,13 @@
 """FastAPI routes only — orchestration lives in app.pipeline, math in app.functions."""
 import logging
+import mimetypes
 import time
 from pathlib import Path
 from uuid import uuid4
+
+# Flutter web ships a .wasm (CanvasKit); ensure it's served with the right MIME
+# so the browser can stream-compile it instead of falling back.
+mimetypes.add_type("application/wasm", ".wasm")
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,12 +17,21 @@ from pydantic import BaseModel, Field
 
 from app import pipeline
 from app.agents.gemini_client import GeminiAgentError
+from app.data import ingestion
 from app.data.bigquery_client import (
+    get_accounts,
     get_alerts,
+    get_connected_banks,
+    get_consents,
+    get_customer_by_id,
     get_customer_by_username,
+    get_loans,
+    get_transactions,
     save_decision_request,
     save_recommendation,
 )
+from app.agents.data_sufficiency import assess as assess_sufficiency
+from app.functions.completeness import STATUS_PARTIAL, build_evidence, check_completeness
 from app.functions.risk_model import predict_risk
 
 
@@ -45,6 +59,12 @@ class RadarInput(BaseModel):
     customer_id: str
 
 
+class IngestInput(BaseModel):
+    customer_id: str
+    bank_code: str
+    consent_id: str
+
+
 app = FastAPI(title="Edraak API", version="0.3.0")
 
 app.add_middleware(
@@ -67,6 +87,24 @@ def warm_risk_model():
     predict_risk({})
 
 
+@app.on_event("startup")
+def auto_seed():
+    """Re-seed the demo world if it is anchored to a different day (AUTO_SEED=true).
+
+    This is what makes demo day zero-maintenance on Cloud Run: the first cold
+    start of the day regenerates the banks' cores and the first-party data with
+    dates anchored to today — no manual load_seed_data run needed.
+    """
+    from app import config
+    if not config.auto_seed():
+        return
+    try:
+        from app.data.seed.load_seed_data import ensure_fresh_seed
+        ensure_fresh_seed()
+    except Exception:
+        logger.warning("flow.seed.auto_failed message=Startup auto-seed failed; continuing with existing data", exc_info=True)
+
+
 @app.exception_handler(GeminiAgentError)
 def gemini_agent_exception_handler(_request: Request, exc: GeminiAgentError):
     logger.error("request.failed source=gemini error=%s", exc)
@@ -82,6 +120,13 @@ def runtime_exception_handler(_request: Request, exc: RuntimeError):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "edraak"}
+
+
+@app.get("/api/ui-config")
+def ui_config():
+    """Runtime config the Flutter app reads at startup (so the gateway URL isn't baked in)."""
+    from app import config
+    return {"gateway_base": config.openbanking_gateway_url()}
 
 
 @app.post("/api/login")
@@ -115,6 +160,14 @@ def analyze(decision_input: DecisionInput):
         request_id, decision_input.customer_id, decision_input.goal_type,
         decision_input.goal_amount, decision_input.monthly_installment,
     )
+    coverage_report = _coverage(decision_input.customer_id, deep=True)
+    if coverage_report is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    if coverage_report["is_blocking"]:
+        message = "؛ ".join(f["message_ar"] for f in coverage_report["findings"] if f["severity"] == "critical")
+        logger.warning("analyze.blocked_incomplete request_id=%s message=Data insufficient to analyze", request_id)
+        raise HTTPException(status_code=422, detail=message or "البيانات المرتبطة غير كافية للتحليل.")
+
     try:
         result = pipeline.run_analysis(decision)
     except LookupError:
@@ -122,6 +175,8 @@ def analyze(decision_input: DecisionInput):
     except ValueError as exc:
         logger.warning("analyze.validation_failed request_id=%s error=%s", request_id, exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    result["coverage"] = coverage_report
 
     logger.info("flow.analysis.storage.start request_id=%s message=Saving request and recommendation to storage-only tables", request_id)
     save_decision_request({**decision, "request_id": request_id})
@@ -158,6 +213,85 @@ def radar_trigger(radar_input: RadarInput):
 def list_alerts(customer_id: str):
     logger.info("flow.alerts.list customer_id=%s message=Loading stored radar alerts for UI", customer_id)
     return get_alerts(customer_id)
+
+
+@app.post("/api/ingest")
+def ingest(ingest_input: IngestInput):
+    """Pull one consented bank's data through the gateway into BigQuery (bronze→silver)."""
+    request_id = _request_id()
+    logger.info("flow.ingest.requested request_id=%s customer_id=%s bank=%s message=Consent approved; ingesting",
+                request_id, ingest_input.customer_id, ingest_input.bank_code)
+    try:
+        summary = ingestion.ingest_bank(
+            ingest_input.customer_id, ingest_input.bank_code, ingest_input.consent_id)
+    except ingestion.IngestionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"status": "ingested", **summary, "coverage": _coverage(ingest_input.customer_id)}
+
+
+@app.get("/api/coverage/{customer_id}")
+def coverage(customer_id: str, deep: bool = False):
+    """Report whether the linked data is enough. deep=true adds the AI sufficiency judgment."""
+    logger.info("flow.coverage.check customer_id=%s deep=%s message=Assessing data completeness", customer_id, deep)
+    result = _coverage(customer_id, deep=deep)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return result
+
+
+@app.get("/api/consents/{customer_id}")
+def list_consents(customer_id: str):
+    """List the customer's linked-account consents for the management screen."""
+    return get_consents(customer_id)
+
+
+# One sufficiency judgment per (customer, linked-banks, data volume): re-linking a
+# bank changes the key, so the agent re-runs exactly when the picture changes.
+_sufficiency_cache: dict[tuple, dict] = {}
+
+
+def _coverage(customer_id: str, deep: bool = False) -> dict | None:
+    """Build the coverage report. deep=False → deterministic facts only (fast, for
+    screens); deep=True → adds the Data Sufficiency Agent judgment (used on analyze)."""
+    customer = get_customer_by_id(customer_id)
+    if not customer:
+        return None
+    accounts = get_accounts(customer_id)
+    transactions = get_transactions(customer_id)
+    loans = get_loans(customer_id)
+    connected = get_connected_banks(customer_id)
+
+    report = check_completeness(customer, accounts, transactions, loans, connected)
+    if not deep or report["is_blocking"]:
+        return report  # screens stay fast; a missing salary needs no LLM either
+
+    key = (customer_id, tuple(sorted(connected)), len(transactions))
+    judgment = _sufficiency_cache.get(key)
+    if judgment is None:
+        try:
+            evidence = build_evidence(customer, accounts, transactions, loans, connected)
+            output = assess_sufficiency(evidence)
+            judgment = {
+                "looks_complete": output.looks_complete,
+                "confidence": output.confidence,
+                "findings": [{"code": "llm_sufficiency", "severity": "medium", "message_ar": f}
+                             for f in output.findings_ar],
+            }
+        except GeminiAgentError:
+            logger.warning("coverage.sufficiency_unavailable customer_id=%s message=Falling back to deterministic-only coverage", customer_id)
+            judgment = {
+                "looks_complete": True,
+                "confidence": 0.0,
+                "findings": [{"code": "llm_unavailable", "severity": "low",
+                              "message_ar": "التحقق الذكي من اكتمال البيانات غير متاح حاليًا — النتائج من الفحوصات الحتمية فقط."}],
+            }
+        _sufficiency_cache[key] = judgment
+
+    report["findings"] = report["findings"] + judgment["findings"]
+    report["sufficiency_confidence"] = judgment["confidence"]
+    if not judgment["looks_complete"] and report["status"] == "كافية":
+        report["status"] = STATUS_PARTIAL
+    return report
 
 
 @app.get("/{path:path}")

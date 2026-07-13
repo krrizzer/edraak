@@ -1,10 +1,13 @@
-FROM node:20-slim AS ui-builder
+# Build the Flutter web UI. GATEWAY_BASE can be baked in at build time; if left
+# empty, the app fetches the gateway URL at runtime from /api/ui-config instead.
+FROM ghcr.io/cirruslabs/flutter:stable AS ui-builder
 
+ARG GATEWAY_BASE=""
 WORKDIR /ui
-COPY ui/package*.json ./
-RUN npm install
+COPY ui/pubspec.yaml ./
+RUN flutter pub get
 COPY ui/ ./
-RUN npm run build
+RUN flutter build web --release --dart-define=GATEWAY_BASE=$GATEWAY_BASE
 
 FROM python:3.11-slim
 
@@ -21,7 +24,7 @@ COPY app/requirements.txt ./app/requirements.txt
 RUN pip install --no-cache-dir -r app/requirements.txt
 
 COPY app/ ./app/
-COPY --from=ui-builder /ui/dist ./app/static
+COPY --from=ui-builder /ui/build/web ./app/static
 
 # Train the placeholder risk model on synthetic data at build time (see risk_model.py).
 RUN python -m app.functions.risk_model

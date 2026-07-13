@@ -71,3 +71,29 @@ def test_categories_report_month_to_date_deviation():
     assert rows["cafes"]["mtd"] == 700
     assert rows["cafes"]["baseline_mtd"] == 160
     assert rows["groceries"]["deviation_pct"] == 0
+
+
+def test_savings_are_a_reserve_not_spendable():
+    profile, accounts, transactions, loans, obligations = _fixture(balance=4200)
+    accounts.append({"account_id": "A2", "customer_id": "CUST999", "bank_code": "ALINMA",
+                     "account_type": "savings", "balance": 50000})
+    result = run_radar(profile, accounts, transactions, loans, obligations, today=TODAY)
+    # 50k of savings must not hide the gap: spendable stays 4200, gap still fires.
+    assert result["trajectory"]["balance_now"] == 4200
+    assert result["trajectory"]["savings_reserve"] == 50000
+    assert result["alert_type"] == "installment_gap"
+
+
+def test_overspend_detected_before_salary_day():
+    # No committed payment fails, but the pace drains the balance before day-25 salary.
+    profile, accounts, transactions, loans, obligations = _fixture(balance=900)
+    profile["salary_day"] = 25
+    loans.clear()          # no installment -> no installment gap possible
+    obligations.clear()
+    result = run_radar(profile, accounts, transactions, loans, obligations, today=TODAY)
+    # Pace is 85/day; 900 runs out ~day 21, before the day-25 salary.
+    assert result["alert_type"] == "overspend"
+    assert result["gap_amount"] > 0
+    assert result["trajectory"]["projected_trough"]["amount"] < 0
+    assert result["trajectory"]["suggested_cuts"]
+    assert result["trajectory"]["suggested_cuts"][0]["category"] == "cafes"

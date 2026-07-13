@@ -1,6 +1,6 @@
 # Edraak Cloud Run App
 
-Edraak is a Cloud Run-ready FastAPI + React prototype for a cross-bank
+Edraak is a Cloud Run-ready FastAPI + Flutter prototype for a cross-bank
 financial seatbelt on simulated SAMA Open Banking data. It sees the customer's
 accounts, loans, and raw transactions across ALL of their banks, simulates the
 next 12 months of cash flow, and communicates the result in Arabic.
@@ -62,14 +62,20 @@ app/
     verdict_rules.py       # curve rules; thresholds in one dict at the top
     radar.py               # current-month gap detection
     risk_model.py          # sklearn logistic regression; synthetic training data
+    completeness.py        # deterministic data-coverage check
+    recurrence.py          # deterministic recurring-obligation grouping
+  data/
+    bigquery_client.py     # ALL BigQuery reads/writes
+    ingestion.py           # consent → gateway pull → bronze → silver
+    seed/                  # first-party seed generator + loader
   agents/                  # the only LLM code
     gemini_client.py       # Vertex AI calls + strict schema validation + number audit
     schemas.py             # all Pydantic response schemas
     transaction_intelligence.py
     decision_advisor.py
     intervention.py
-ui/                        # Vite + React (Arabic, RTL): mode select, chart, radar
-tests/                     # forecast/verdict/radar unit tests
+ui/                        # Flutter web app (Arabic, RTL): login, link banks, chart, radar
+tests/                     # forecast/verdict/radar/recurrence/validator unit tests
 ```
 
 ## Data Rules
@@ -96,15 +102,17 @@ export GCP_PROJECT_ID=your-project      # BigQuery + Vertex AI credentials requi
 uvicorn app.main:app --reload --port 8080
 ```
 
-UI:
+UI (Flutter web — needs the Flutter SDK) and the mock gateway both run as
+separate processes. See [../../RUNNING.md](../../RUNNING.md) for the full
+three-terminal guide. In brief:
 
 ```bash
 cd ui
-npm install
-npm run dev
+flutter pub get
+flutter run -d chrome --dart-define=API_BASE=http://localhost:8080 --dart-define=GATEWAY_BASE=http://localhost:8081
 ```
 
-Seed the demo data (dates are relative to the run day — reseed near demo day):
+Seed the demo data (first-party only; dates relative to the run day — reseed near demo day):
 
 ```bash
 GCP_PROJECT_ID=your-project python -m app.data.seed.load_seed_data

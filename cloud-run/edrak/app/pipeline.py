@@ -133,10 +133,10 @@ def run_radar_check(customer_id: str) -> dict:
     trace.add("intervention_agent", "llm", alert_text.trace_message_ar)
 
     alert_id = None
-    if detection["has_gap"]:
+    if detection["alert_type"] != "on_track":
         alert_id = save_alert({
             "customer_id": customer_id,
-            "alert_type": "shortfall_projected",
+            "alert_type": detection["alert_type"],
             "gap_amount": detection["gap_amount"],
             "gap_date": detection["gap_date"],
             "cause_category": (detection["cause_category"] or {}).get("category"),
@@ -147,6 +147,7 @@ def run_radar_check(customer_id: str) -> dict:
     return {
         "customer": _customer_view(customer),
         "has_gap": detection["has_gap"],
+        "alert_type": detection["alert_type"],
         "gap_amount": detection["gap_amount"],
         "gap_date": detection["gap_date"],
         "cause_category": detection["cause_category"],

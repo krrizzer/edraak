@@ -18,6 +18,21 @@ def bq_dataset() -> str:
     return _env("BQ_DATASET", "edraak_finance")
 
 
+def bank_cores_dataset() -> str:
+    """Return the dataset holding the simulated core-banking data behind the gateway."""
+    return _env("BANK_CORES_DATASET", "bank_cores")
+
+
+def bq_core_table(name: str) -> str:
+    """Fully qualified table id inside the bank_cores dataset."""
+    return f"{gcp_project_id()}.{bank_cores_dataset()}.{name}"
+
+
+def auto_seed() -> bool:
+    """When true, the backend re-seeds the demo world on startup if it is stale."""
+    return _env("AUTO_SEED", "true").lower() == "true"
+
+
 def bq_table(name: str) -> str:
     """Return the fully qualified BigQuery table id for a logical table name."""
     tables = {
@@ -28,6 +43,8 @@ def bq_table(name: str) -> str:
         "user_profiles": _env("BQ_USER_PROFILES_TABLE", "user_profiles"),
         "detected_obligations": _env("BQ_DETECTED_OBLIGATIONS_TABLE", "detected_obligations"),
         "alerts": _env("BQ_ALERTS_TABLE", "alerts"),
+        "ob_consents": _env("BQ_OB_CONSENTS_TABLE", "ob_consents"),
+        "ob_raw_payloads": _env("BQ_OB_RAW_PAYLOADS_TABLE", "ob_raw_payloads"),
         "decision_requests": _env("BQ_DECISION_REQUESTS_TABLE", "decision_requests"),
         "recommendations": _env("BQ_RECOMMENDATIONS_TABLE", "recommendations"),
     }
@@ -52,6 +69,11 @@ def vertex_location() -> str:
 def gemini_model() -> str:
     """Return the Gemini model id used by every agent."""
     return _env("GEMINI_MODEL", "gemini-2.5-flash-lite")
+
+
+def openbanking_gateway_url() -> str:
+    """Base URL of the mock SAMA Open Banking gateway service (separate Cloud Run app)."""
+    return _env("OPENBANKING_GATEWAY_URL", "http://localhost:8081").rstrip("/")
 
 
 def risk_model_path() -> Path:

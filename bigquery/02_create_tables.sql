@@ -4,6 +4,44 @@
 -- Replace YOUR_PROJECT_ID with your real Google Cloud project ID.
 -- Change edraak_finance if you use a different dataset name.
 
+-- ============================================================
+-- BANK CORES (separate dataset): the simulated core-banking data
+-- behind the mock gateway. Create the dataset first:
+--   CREATE SCHEMA IF NOT EXISTS `YOUR_PROJECT_ID.bank_cores`;
+-- Same column shapes as the edraak_finance silver tables.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS `YOUR_PROJECT_ID.bank_cores.accounts` (
+  account_id STRING NOT NULL, customer_id STRING NOT NULL, bank_code STRING,
+  bank_name_ar STRING, account_type STRING, iban STRING, balance FLOAT64,
+  is_primary BOOL, created_at TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS `YOUR_PROJECT_ID.bank_cores.transactions` (
+  transaction_id STRING NOT NULL, customer_id STRING NOT NULL, account_id STRING,
+  bank_code STRING, transaction_date DATE, merchant STRING, category STRING,
+  raw_description STRING, amount FLOAT64, transaction_type STRING, channel STRING,
+  created_at TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS `YOUR_PROJECT_ID.bank_cores.loans` (
+  loan_id STRING NOT NULL, customer_id STRING NOT NULL, bank_code STRING,
+  loan_type STRING, loan_total_amount FLOAT64, total_profit_amount FLOAT64,
+  total_amount FLOAT64, remaining_amount FLOAT64, monthly_installment FLOAT64,
+  remaining_months INT64, first_installment_date DATE, start_date DATE,
+  end_date DATE, status STRING, created_at TIMESTAMP
+);
+
+-- Which day the synthetic world is anchored to; the backend re-seeds when stale.
+CREATE TABLE IF NOT EXISTS `YOUR_PROJECT_ID.bank_cores.seed_meta` (
+  anchor_date DATE NOT NULL,
+  seeded_at TIMESTAMP
+);
+
+-- ============================================================
+-- EDRAAK_FINANCE (the app's own warehouse) below.
+-- ============================================================
+
 -- Source banking table: customer identity and employment information.
 -- Balances live per bank in the accounts table.
 CREATE TABLE IF NOT EXISTS `YOUR_PROJECT_ID.edraak_finance.customers` (
@@ -104,6 +142,31 @@ CREATE TABLE IF NOT EXISTS `YOUR_PROJECT_ID.edraak_finance.detected_obligations`
   is_committed BOOL,
   source_bank_codes ARRAY<STRING>,
   detected_at TIMESTAMP
+);
+
+-- TPP-side consent ledger: Edraak's record of every consent it holds.
+CREATE TABLE IF NOT EXISTS `YOUR_PROJECT_ID.edraak_finance.ob_consents` (
+  consent_id STRING NOT NULL,
+  customer_id STRING NOT NULL,
+  bank_code STRING,
+  status STRING,
+  permissions ARRAY<STRING>,
+  created_at TIMESTAMP,
+  expires_at TIMESTAMP,
+  revoked_at TIMESTAMP
+);
+
+-- Bronze layer: raw KSAOB JSON as pulled from a bank gateway, before normalization.
+CREATE TABLE IF NOT EXISTS `YOUR_PROJECT_ID.edraak_finance.ob_raw_payloads` (
+  payload_id STRING NOT NULL,
+  customer_id STRING NOT NULL,
+  bank_code STRING,
+  consent_id STRING,
+  resource STRING,
+  account_id STRING,
+  page INT64,
+  raw_json STRING,
+  fetched_at TIMESTAMP
 );
 
 -- Storage-only table: radar alerts shown in the UI. Agents never read it.

@@ -5,7 +5,7 @@
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant UI as React UI
+    participant UI as Flutter app
     participant API as FastAPI Backend
     participant BQ as BigQuery
     participant Det as Deterministic Python
@@ -52,7 +52,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant UI as React UI
+    participant UI as Flutter app
     participant API as FastAPI Backend
     participant BQ as BigQuery
     participant Det as Deterministic Python
