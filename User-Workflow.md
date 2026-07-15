@@ -5,7 +5,7 @@
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant UI as React UI
+    participant UI as Flutter app
     participant API as FastAPI Backend
     participant BQ as BigQuery
     participant Det as Deterministic Python
@@ -27,9 +27,9 @@ sequenceDiagram
     alt fresh detected_obligations cache exists
         API->>BQ: Read detected_obligations
     else cache miss
-        API->>Gemini: Transaction Intelligence Agent (raw_description rows)
+        API->>Det: Group recurring rows by stable amount/day evidence
+        API->>Gemini: Transaction Intelligence Agent (merchant + raw descriptions + channel)
         Gemini-->>API: DetectedObligation list (strict schema)
-        API->>API: Echo-check amounts vs cited transactions
         API->>BQ: Write detected_obligations cache
     end
 
@@ -52,7 +52,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant UI as React UI
+    participant UI as Flutter app
     participant API as FastAPI Backend
     participant BQ as BigQuery
     participant Det as Deterministic Python
@@ -62,16 +62,22 @@ sequenceDiagram
     Note over UI,API: In production this is a Cloud Scheduler job
     UI->>API: POST /api/radar/trigger
 
-    API->>BQ: Read accounts, transactions, loans (+ obligations cache)
+    API->>BQ: Read accounts, raw transactions, loans (+ derived caches)
+    alt transaction classification cache miss
+        API->>Gemini: Classify merchant/description/channel patterns
+        Gemini-->>API: Category labels only (no source-bank category)
+        API->>BQ: Write transaction_classifications
+    end
     API->>Det: Radar detector: MTD pace vs 3-month baseline,<br/>projected balance at each upcoming payment date
 
     alt gap detected
-        API->>Gemini: Intervention Agent (gap, date, cause, trajectory)
-        Gemini-->>API: One actionable Arabic alert
+        API->>Gemini: Intervention Agent (cause + suggested action)
+        Gemini-->>API: Number-free Arabic guidance
+        API->>Det: Render exact numeric equation and message
         API->>BQ: Insert alerts (storage only)
     else on track
-        API->>Gemini: Intervention Agent (reassurance with numbers)
-        Gemini-->>API: "الحزام مثبّت" message
+        API->>Gemini: Intervention Agent (number-free reassurance)
+        API->>Det: Render exact numeric equation and message
     end
 
     API-->>UI: Alert card + trajectory numbers + step trace

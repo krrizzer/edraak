@@ -17,6 +17,10 @@ locals {
   ])
 }
 
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
 resource "google_project_service" "required" {
   for_each = local.required_apis
 
@@ -49,6 +53,20 @@ module "cloud_run_service_account" {
   ]
 }
 
+# `gcloud run deploy --source` builds with the project's default build identity.
+# Grant the documented Cloud Run builder role up front so the one-command demo
+# deployment does not stop midway on a fresh project.
+resource "google_project_iam_member" "cloud_run_source_builder" {
+  project = var.project_id
+  role    = "roles/run.builder"
+  member  = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
+
+  depends_on = [
+    google_project_service.required["cloudbuild.googleapis.com"],
+    google_project_service.required["run.googleapis.com"],
+  ]
+}
+
 resource "google_bigquery_dataset" "edraak" {
   project                    = var.project_id
   dataset_id                 = var.dataset_id
@@ -67,6 +85,91 @@ resource "google_bigquery_dataset_iam_member" "cloud_run_data_editor" {
   dataset_id = google_bigquery_dataset.edraak.dataset_id
   role       = "roles/bigquery.dataEditor"
   member     = module.cloud_run_service_account.iam_email
+}
+
+# The mock banks' own database: a SEPARATE dataset the gateway serves from,
+# simulating that a real bank API has a core system behind it. Edraak's app
+# only ever receives this data through the consented gateway API.
+resource "google_bigquery_dataset" "bank_cores" {
+  project                    = var.project_id
+  dataset_id                 = var.bank_cores_dataset_id
+  location                   = var.bigquery_location
+  description                = "Simulated core-banking data behind the mock KSAOB gateway."
+  labels                     = var.labels
+  delete_contents_on_destroy = true
+
+  depends_on = [
+    google_project_service.required["bigquery.googleapis.com"],
+  ]
+}
+
+# The Edraak service account seeds the cores (the daily auto-seed) and the
+# gateway reads them. Kept to one SA for demo simplicity.
+resource "google_bigquery_dataset_iam_member" "bank_cores_editor" {
+  project    = var.project_id
+  dataset_id = google_bigquery_dataset.bank_cores.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = module.cloud_run_service_account.iam_email
+}
+
+resource "google_bigquery_table" "core_accounts" {
+  project             = var.project_id
+  dataset_id          = google_bigquery_dataset.bank_cores.dataset_id
+  table_id            = "accounts"
+  deletion_protection = false
+  schema              = google_bigquery_table.accounts.schema
+}
+
+resource "google_bigquery_table" "core_transactions" {
+  project             = var.project_id
+  dataset_id          = google_bigquery_dataset.bank_cores.dataset_id
+  table_id            = "transactions"
+  deletion_protection = false
+  schema              = google_bigquery_table.transactions.schema
+}
+
+resource "google_bigquery_table" "core_loans" {
+  project             = var.project_id
+  dataset_id          = google_bigquery_dataset.bank_cores.dataset_id
+  table_id            = "loans"
+  deletion_protection = false
+  schema              = google_bigquery_table.loans.schema
+}
+
+# One-row bookkeeping table: date + generator layout version. The backend
+# re-seeds automatically when either one no longer matches the running code.
+resource "google_bigquery_table" "core_seed_meta" {
+  project             = var.project_id
+  dataset_id          = google_bigquery_dataset.bank_cores.dataset_id
+  table_id            = "seed_meta"
+  deletion_protection = false
+
+  schema = jsonencode([
+    { name = "anchor_date", type = "DATE", mode = "REQUIRED" },
+    { name = "seeded_at", type = "TIMESTAMP", mode = "NULLABLE" },
+    { name = "seed_version", type = "STRING", mode = "NULLABLE" },
+  ])
+}
+
+# Durable, append-only bank-side consent state. Keeping this in bank_cores makes
+# consent survive Cloud Run restarts and stay consistent across instances.
+resource "google_bigquery_table" "core_consents" {
+  project             = var.project_id
+  dataset_id          = google_bigquery_dataset.bank_cores.dataset_id
+  table_id            = "consents"
+  deletion_protection = false
+
+  schema = jsonencode([
+    { name = "consent_id", type = "STRING", mode = "REQUIRED" },
+    { name = "customer_id", type = "STRING", mode = "REQUIRED" },
+    { name = "bank_code", type = "STRING", mode = "REQUIRED" },
+    { name = "permissions", type = "STRING", mode = "REPEATED" },
+    { name = "status", type = "STRING", mode = "REQUIRED" },
+    { name = "created_at", type = "TIMESTAMP", mode = "REQUIRED" },
+    { name = "expires_at", type = "TIMESTAMP", mode = "REQUIRED" },
+    { name = "redirect_uri", type = "STRING", mode = "NULLABLE" },
+    { name = "updated_at", type = "TIMESTAMP", mode = "REQUIRED" },
+  ])
 }
 
 resource "google_bigquery_table" "customers" {
@@ -119,9 +222,8 @@ resource "google_bigquery_table" "transactions" {
   table_id            = "transactions"
   deletion_protection = false
 
-  # raw_description is the messy bank narrative string the Transaction Intelligence
-  # Agent reads. category stays but is intentionally unreliable/partial, like real
-  # cross-bank data. is_recurring was removed: recurrence is detected, not seeded.
+  # There is deliberately no source category. Transaction meaning is inferred
+  # from merchant, raw_description, channel, and behavioral recurrence.
   schema = jsonencode([
     { name = "transaction_id", type = "STRING", mode = "REQUIRED" },
     { name = "customer_id", type = "STRING", mode = "REQUIRED" },
@@ -129,7 +231,6 @@ resource "google_bigquery_table" "transactions" {
     { name = "bank_code", type = "STRING", mode = "NULLABLE" },
     { name = "transaction_date", type = "DATE", mode = "NULLABLE" },
     { name = "merchant", type = "STRING", mode = "NULLABLE" },
-    { name = "category", type = "STRING", mode = "NULLABLE" },
     { name = "raw_description", type = "STRING", mode = "NULLABLE" },
     { name = "amount", type = "FLOAT", mode = "NULLABLE" },
     { name = "transaction_type", type = "STRING", mode = "NULLABLE" },
@@ -185,6 +286,64 @@ resource "google_bigquery_table" "detected_obligations" {
     { name = "is_committed", type = "BOOLEAN", mode = "NULLABLE" },
     { name = "source_bank_codes", type = "STRING", mode = "REPEATED" },
     { name = "detected_at", type = "TIMESTAMP", mode = "NULLABLE" },
+  ])
+}
+
+# AI-derived meaning lives outside the immutable banking feed. Radar reads the
+# latest label per transaction; source transactions never pretend to be cleanly categorized.
+resource "google_bigquery_table" "transaction_classifications" {
+  project             = var.project_id
+  dataset_id          = google_bigquery_dataset.edraak.dataset_id
+  table_id            = "transaction_classifications"
+  deletion_protection = false
+
+  schema = jsonencode([
+    { name = "customer_id", type = "STRING", mode = "REQUIRED" },
+    { name = "transaction_id", type = "STRING", mode = "REQUIRED" },
+    { name = "category", type = "STRING", mode = "REQUIRED" },
+    { name = "confidence", type = "FLOAT", mode = "NULLABLE" },
+    { name = "classified_at", type = "TIMESTAMP", mode = "REQUIRED" },
+  ])
+}
+
+# TPP-side consent ledger: Edraak's own record of every consent it holds, so
+# every ingested row traces back to a consent id. The bank keeps its own copy.
+resource "google_bigquery_table" "ob_consents" {
+  project             = var.project_id
+  dataset_id          = google_bigquery_dataset.edraak.dataset_id
+  table_id            = "ob_consents"
+  deletion_protection = false
+
+  schema = jsonencode([
+    { name = "consent_id", type = "STRING", mode = "REQUIRED" },
+    { name = "customer_id", type = "STRING", mode = "REQUIRED" },
+    { name = "bank_code", type = "STRING", mode = "NULLABLE" },
+    { name = "status", type = "STRING", mode = "NULLABLE" },
+    { name = "permissions", type = "STRING", mode = "REPEATED" },
+    { name = "created_at", type = "TIMESTAMP", mode = "NULLABLE" },
+    { name = "expires_at", type = "TIMESTAMP", mode = "NULLABLE" },
+    { name = "revoked_at", type = "TIMESTAMP", mode = "NULLABLE" },
+  ])
+}
+
+# Bronze layer: the raw KSAOB JSON exactly as pulled from a bank gateway, kept
+# as proof of what arrived before any normalization.
+resource "google_bigquery_table" "ob_raw_payloads" {
+  project             = var.project_id
+  dataset_id          = google_bigquery_dataset.edraak.dataset_id
+  table_id            = "ob_raw_payloads"
+  deletion_protection = false
+
+  schema = jsonencode([
+    { name = "payload_id", type = "STRING", mode = "REQUIRED" },
+    { name = "customer_id", type = "STRING", mode = "REQUIRED" },
+    { name = "bank_code", type = "STRING", mode = "NULLABLE" },
+    { name = "consent_id", type = "STRING", mode = "NULLABLE" },
+    { name = "resource", type = "STRING", mode = "NULLABLE" },
+    { name = "account_id", type = "STRING", mode = "NULLABLE" },
+    { name = "page", type = "INTEGER", mode = "NULLABLE" },
+    { name = "raw_json", type = "STRING", mode = "NULLABLE" },
+    { name = "fetched_at", type = "TIMESTAMP", mode = "NULLABLE" },
   ])
 }
 
@@ -319,7 +478,8 @@ resource "google_cloud_run_v2_service" "edraak" {
 
     scaling {
       min_instance_count = 0
-      max_instance_count = 2
+      # Demo service: one instance avoids two cold starts racing the daily seed.
+      max_instance_count = 1
     }
 
     containers {

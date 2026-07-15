@@ -20,7 +20,7 @@ WHERE customer_id = selected_customer_id
 ORDER BY is_primary DESC, bank_code;
 
 -- 3. The messy narrative strings the Transaction Intelligence Agent reads.
-SELECT transaction_date, bank_code, amount, raw_description, category
+SELECT transaction_date, bank_code, amount, merchant, raw_description, channel
 FROM `YOUR_PROJECT_ID.edraak_finance.transactions`
 WHERE customer_id = selected_customer_id
 ORDER BY transaction_date DESC

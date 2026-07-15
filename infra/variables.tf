@@ -33,6 +33,12 @@ variable "dataset_id" {
   default     = "edraak_finance"
 }
 
+variable "bank_cores_dataset_id" {
+  description = "BigQuery dataset ID for the simulated core-banking data behind the mock gateway."
+  type        = string
+  default     = "bank_cores"
+}
+
 variable "artifact_registry_repo_name" {
   description = "Artifact Registry Docker repository name."
   type        = string

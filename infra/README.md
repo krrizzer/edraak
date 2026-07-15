@@ -7,10 +7,13 @@ This folder contains a small Terraform layer for the Edraak hackathon prototype.
 - Required Google Cloud APIs for Cloud Run, Cloud Build, Artifact Registry, BigQuery, Vertex AI, IAM, Secret Manager, and Logging
 - A Cloud Run runtime service account
 - Minimal project IAM for that service account
-- One BigQuery dataset named `edraak_finance` by default
-- Nine BigQuery tables: `customers`, `accounts`, `transactions`, `loans`,
-  `user_profiles`, `detected_obligations`, `decision_requests`,
-  `recommendations`, and `alerts`
+- Cloud Run source-builder permission for the project's default build identity
+- Two BigQuery datasets: `edraak_finance` for the product warehouse and
+  `bank_cores` for the simulated banks behind the gateway
+- Product source, bronze, silver, derived, consent-ledger, recommendation, and
+  alert tables in `edraak_finance`
+- Simulated bank `accounts`, `transactions`, `loans`, durable append-only
+  `consents`, and daily `seed_meta` tables in `bank_cores`
 - One Docker Artifact Registry repository
 - An optional placeholder Cloud Run service using a public sample image
 - Optional Secret Manager secret containers with no real secret values
@@ -137,7 +140,7 @@ Adjust region, dataset name, Cloud Run public access, or optional secrets only i
 
 ```bash
 terraform init
-terraform apply -var-file=terraform.tfvars
+terraform apply -var-file="terraform.tfvars"
 ```
 
 ## Destroy
@@ -146,15 +149,17 @@ terraform apply -var-file=terraform.tfvars
 terraform destroy -var-file=terraform.tfvars
 ```
 
-## Deploy The Real App Later
+## Deploy The Demo
 
-Terraform creates the baseline infrastructure. The actual app deployment can happen separately from the Cloud Run app folder:
+From the repository root on Windows, provision and deploy both Cloud Run services:
 
-```bash
-gcloud run deploy edraak-app --source ../cloud-run/edrak --region me-central2
+```powershell
+.\deploy-demo.ps1
 ```
 
-That command replaces the placeholder Cloud Run sample container with the real Edraak FastAPI + React application.
+The script applies this Terraform configuration, deploys the gateway first,
+discovers its URL, then deploys the FastAPI + Flutter service in `us-central1`
+using the shared hackathon runtime service account.
 
 If Terraform created the placeholder Cloud Run service, a future `terraform apply` may try to return it to the sample image. For a hackathon flow, use Terraform for baseline infra and use `gcloud run deploy` for app releases, or later add a real image variable to Terraform when you want Terraform to manage releases too.
 
@@ -164,7 +169,9 @@ All BigQuery reads and writes live in `../cloud-run/edrak/app/data/bigquery_clie
 
 Vertex AI Gemini calls live in `../cloud-run/edrak/app/agents/gemini_client.py`.
 
-After `terraform apply`, load the demo data with
-`python -m app.data.seed.load_seed_data` from `../cloud-run/edrak`.
+No seed command is required after deployment. The backend checks
+`bank_cores.seed_meta` during startup and refreshes both datasets when the demo
+world is not anchored to the current day. A seed failure fails startup instead
+of serving an empty, healthy-looking app.
 
 Do not put real secret values in Terraform. If `create_secrets = true`, Terraform creates empty secret containers only. Add real values manually or through CI/CD.

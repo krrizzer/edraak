@@ -85,6 +85,10 @@ def _summarize_group(index: int, rows: list[dict]) -> dict:
     return {
         "group_id": f"G{index:03d}",
         "sample_descriptions": samples[:4],
+        "sample_merchants": list(dict.fromkeys(
+            str(r.get("merchant")) for r in rows if r.get("merchant")
+        ))[:4],
+        "sample_channels": sorted({str(r.get("channel")) for r in rows if r.get("channel")}),
         "monthly_amount": round(avg, 2),
         "amount_cov": round(pstdev(amounts) / avg, 3) if len(amounts) > 1 and avg > 0 else 0.0,
         "day_of_month": round(median(_day_of(r) for r in rows)),

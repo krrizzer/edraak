@@ -9,13 +9,14 @@ TODAY = date(2026, 7, 10)
 
 def _txn(day_iso, amount, category, txn_type="expense"):
     return {
-        "transaction_id": f"T-{day_iso}-{amount}",
+        "transaction_id": f"T-{category}-{day_iso}-{amount}",
         "customer_id": "CUST999",
         "transaction_date": day_iso,
         "amount": amount,
-        "category": category,
         "transaction_type": txn_type,
+        "merchant": "TEST MERCHANT",
         "raw_description": "POS TEST",
+        "channel": "pos",
     }
 
 
@@ -42,7 +43,11 @@ def _fixture(balance):
         _txn("2026-07-09", -300, "cafes"),
         _txn("2026-07-06", -150, "groceries"),
     ]
-    return profile, accounts, transactions, loans, obligations
+    classifications = {
+        t["transaction_id"]: t["transaction_id"].split("-")[1]
+        for t in transactions if t["transaction_type"] == "expense"
+    }
+    return profile, accounts, transactions, loans, obligations, classifications
 
 
 def test_gap_detected_before_the_loan_installment():
@@ -71,3 +76,53 @@ def test_categories_report_month_to_date_deviation():
     assert rows["cafes"]["mtd"] == 700
     assert rows["cafes"]["baseline_mtd"] == 160
     assert rows["groceries"]["deviation_pct"] == 0
+
+
+def test_savings_are_a_reserve_not_spendable():
+    profile, accounts, transactions, loans, obligations, classifications = _fixture(balance=4200)
+    accounts.append({"account_id": "A2", "customer_id": "CUST999", "bank_code": "ALINMA",
+                     "account_type": "savings", "balance": 50000})
+    result = run_radar(
+        profile, accounts, transactions, loans, obligations, classifications, today=TODAY
+    )
+    # 50k of savings must not hide the gap: spendable stays 4200, gap still fires.
+    assert result["trajectory"]["balance_now"] == 4200
+    assert result["trajectory"]["savings_reserve"] == 50000
+    assert result["alert_type"] == "installment_gap"
+
+
+def test_overspend_detected_before_salary_day():
+    # No committed payment fails, but the pace drains the balance before day-25 salary.
+    profile, accounts, transactions, loans, obligations, classifications = _fixture(balance=900)
+    profile["salary_day"] = 25
+    loans.clear()          # no installment -> no installment gap possible
+    obligations.clear()
+    result = run_radar(
+        profile, accounts, transactions, loans, obligations, classifications, today=TODAY
+    )
+    # Pace is 85/day; 900 runs out ~day 21, before the day-25 salary.
+    assert result["alert_type"] == "overspend"
+    assert result["gap_amount"] > 0
+    assert result["trajectory"]["projected_trough"]["amount"] < 0
+    assert result["trajectory"]["suggested_cuts"]
+    assert result["trajectory"]["suggested_cuts"][0]["category"] == "cafes"
+
+
+def test_visible_projection_components_add_up_exactly():
+    result = run_radar(*_fixture(balance=4200), today=TODAY)
+    trajectory = result["trajectory"]
+    assert (
+        trajectory["balance_now"]
+        + trajectory["pending_salary_amount"]
+        - trajectory["projected_flexible_remaining"]
+        - trajectory["upcoming_commitments_total"]
+        == trajectory["projected_eom_balance"]
+    )
+
+
+def test_source_category_is_ignored_without_ai_classification():
+    profile, accounts, transactions, loans, obligations, _ = _fixture(balance=4200)
+    for transaction in transactions:
+        transaction["category"] = "cafes"
+    result = run_radar(profile, accounts, transactions, loans, obligations, {}, today=TODAY)
+    assert {row["category"] for row in result["trajectory"]["categories"]} == {"uncategorized"}

@@ -1,0 +1,99 @@
+<!doctype html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>موافقة المصرفية المفتوحة</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: Tahoma, Arial, sans-serif;
+      background: #0a1622; color: #e9f1f8; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center; padding: 20px;
+    }
+    .sheet {
+      width: min(460px, 100%); background: #0f2233;
+      border: 1px solid rgba(120, 170, 210, 0.18); border-radius: 18px;
+      padding: 26px; box-shadow: 0 30px 80px rgba(0,0,0,.45);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .logo {
+      width: 46px; height: 46px; border-radius: 12px; background: #16324a;
+      display: grid; place-items: center; font-size: 22px;
+    }
+    h1 { font-size: 19px; margin: 0; line-height: 1.5; }
+    .lead { color: #a9c2d6; font-size: 14px; line-height: 1.9; margin: 6px 0 18px; }
+    .group {
+      background: #0c1d2c; border: 1px solid rgba(120,170,210,.12);
+      border-radius: 12px; padding: 14px 16px; margin-bottom: 12px;
+    }
+    .group h2 { font-size: 14px; margin: 0 0 10px; color: #cfe0ee; }
+    .group.deny h2 { color: #ffb4ad; }
+    ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+    li { font-size: 13px; color: #bcd0e0; display: flex; gap: 8px; align-items: start; }
+    li::before { content: "•"; color: #56b6f0; }
+    .group.deny li::before { content: "✕"; color: #e0736a; }
+    .validity { display: flex; justify-content: space-between; font-size: 13px;
+      color: #a9c2d6; margin: 16px 2px; }
+    .validity b { color: #e9f1f8; }
+    .note { font-size: 12px; color: #8ba6ba; text-align: center; margin: 10px 0 18px; }
+    .actions { display: grid; gap: 10px; }
+    button { width: 100%; min-height: 50px; border: 0; border-radius: 12px;
+      font: inherit; font-weight: 800; cursor: pointer; }
+    .allow { background: #1f6feb; color: #fff; font-size: 16px; }
+    .deny-btn { background: transparent; color: #cfe0ee; border: 1px solid rgba(120,170,210,.25); }
+    .sim { text-align: center; font-size: 11px; color: #6f8ba0; margin-top: 14px; }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="brand">
+      <div class="logo">🏦</div>
+      <div>
+        <h1>تواصل مع إدراك بالنيابة عن {{BANK_NAME}}</h1>
+      </div>
+    </div>
+    <p class="lead">
+      بالضغط على السماح، ستشارك التفاصيل أدناه مع إدراك بالنيابة عن {{BANK_NAME}}
+      لتزويدك برؤية شاملة ودقيقة حول وضعك المالي عبر بنوكك.
+    </p>
+
+    <div class="group">
+      <h2>تفاصيل حسابك</h2>
+      <ul>
+        <li>رقم الحساب ونوعه ورقم الآيبان</li>
+        <li>رصيد حسابك</li>
+      </ul>
+    </div>
+    <div class="group">
+      <h2>تفاصيل عملياتك البنكية</h2>
+      <ul>
+        <li>تفاصيل العمليات الواردة والصادرة</li>
+        <li>وقت العملية واسم التاجر عند توفره</li>
+        <li>المستفيدون والأوامر الدائمة</li>
+      </ul>
+    </div>
+    <div class="group deny">
+      <h2>لن يكون لإدراك الصلاحية على</h2>
+      <ul>
+        <li>إجراء عمليات دفع دون إذنك</li>
+        <li>عرض اسم المستخدم أو كلمة المرور للبنك</li>
+        <li>تعديل تفاصيل حسابك</li>
+      </ul>
+    </div>
+
+    <div class="validity">
+      <span>تاريخ بداية الارتباط<br /><b>اليوم</b></span>
+      <span>تاريخ انتهاء الارتباط<br /><b>{{EXPIRES}}</b></span>
+    </div>
+    <p class="note">⚠ بإمكانك إلغاء الارتباط في أي وقت</p>
+
+    <form method="post" action="/{{BANK_CODE}}/authorize" class="actions">
+      <input type="hidden" name="consent_id" value="{{CONSENT_ID}}" />
+      <button class="allow" type="submit" name="decision" value="allow">السماح</button>
+      <button class="deny-btn" type="submit" name="decision" value="deny">رفض</button>
+    </form>
+    <p class="sim">محاكاة لواجهة موافقة المصرفية المفتوحة — ليست خدمة بنكية حقيقية</p>
+  </div>
+</body>
+</html>

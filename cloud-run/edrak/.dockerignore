@@ -4,8 +4,10 @@ __pycache__
 .env
 .venv
 venv
-node_modules
-ui/node_modules
-ui/dist
-app/static
 .DS_Store
+app/static
+app/functions/models/*.joblib
+ui/build
+ui/.dart_tool
+ui/.flutter-plugins
+ui/.flutter-plugins-dependencies

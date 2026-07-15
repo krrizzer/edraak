@@ -19,6 +19,21 @@ ObligationType = Literal[
     "one_off",
 ]
 
+TransactionCategory = Literal[
+    "cafes",
+    "restaurants",
+    "groceries",
+    "shopping",
+    "entertainment",
+    "fuel",
+    "transport",
+    "housing",
+    "bills",
+    "healthcare",
+    "transfers",
+    "other",
+]
+
 
 class GroupLabel(BaseModel):
     """The agent's classification of ONE deterministically-detected recurring group.
@@ -41,6 +56,18 @@ class TransactionIntelligenceOutput(BaseModel):
     trace_message_ar: str
 
 
+class TransactionPatternLabel(BaseModel):
+    """AI meaning assigned to one merchant/description pattern."""
+    pattern_id: str
+    category: TransactionCategory
+    confidence: float = Field(ge=0, le=1)
+
+
+class TransactionCategorizationOutput(BaseModel):
+    labels: list[TransactionPatternLabel] = []
+    trace_message_ar: str
+
+
 class DecisionAdvisorOutput(BaseModel):
     """The Arabic result the user reads. recommendation must echo the deterministic verdict."""
     recommendation: Recommendation
@@ -51,7 +78,14 @@ class DecisionAdvisorOutput(BaseModel):
 
 
 class InterventionOutput(BaseModel):
-    """One short actionable radar alert, not a report."""
-    title_ar: str
-    message_ar: str
+    """Number-free human guidance appended to deterministic radar facts."""
+    guidance_ar: str
+    trace_message_ar: str
+
+
+class SufficiencyOutput(BaseModel):
+    """The LLM's judgment on whether the linked data forms a complete financial picture."""
+    looks_complete: bool
+    confidence: float = Field(ge=0, le=1)
+    findings_ar: list[str] = []
     trace_message_ar: str

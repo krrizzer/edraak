@@ -19,8 +19,8 @@ def run_gemini_agent(agent_name: str, payload: dict, output_schema: type[BaseMod
                      instruction: str) -> BaseModel:
     """Call Gemini with a JSON payload and validate the response against the schema.
 
-    Hard-fails on invalid output — no static fallback text. The only tolerated
-    repair is the amount-echo fallback inside the Transaction Intelligence Agent.
+    Hard-fails on invalid output — no static fallback text. Financial numbers
+    are always supplied by deterministic application code, never repaired here.
     """
     if not config.use_gemini():
         raise GeminiAgentError("USE_GEMINI must be true. Production mode requires Vertex AI Gemini.")
