@@ -2,7 +2,7 @@
 
 Honest split of labour:
   - Python computes FACTS: is a salary visible, do visible expenses exceed visible
-    income, how deep is the history, which known banks are not linked.
+    income, and how deep is the visible history.
   - The Data Sufficiency Agent (LLM) makes the JUDGMENT a rule can't: does this
     transaction picture look like a complete financial life, or is a slice of it
     clearly happening somewhere we can't see? (No bureau shortcut — under open
@@ -18,8 +18,10 @@ BANK_NAMES_AR = {
     "SAB": "البنك السعودي الأول",
 }
 
-# The banks a Saudi customer could plausibly hold accounts at (the demo's world).
-KNOWN_BANKS = list(BANK_NAMES_AR)
+# Demo seed data intentionally places every external row at Al Rajhi. Other
+# banks remain visible in the UI. This list drives only the demo link suggestion;
+# it is never passed to the AI as evidence of customer ownership.
+DEMO_REQUIRED_BANKS = ["ALINMA", "ALRAJHI"]
 
 STATUS_ENOUGH = "كافية"
 STATUS_PARTIAL = "جزئية"
@@ -50,7 +52,7 @@ def check_completeness(customer: dict, accounts: list[dict], transactions: list[
             "short_history", "low",
             "سجل المعاملات أقصر من ثلاثة أشهر كاملة، لذا دقة التوقعات محدودة."))
 
-    unlinked = [b for b in KNOWN_BANKS if b not in {c.upper() for c in connected_banks}]
+    unlinked = [b for b in DEMO_REQUIRED_BANKS if b not in {c.upper() for c in connected_banks}]
     return {
         "status": STATUS_INSUFFICIENT if blocking else (STATUS_PARTIAL if findings else STATUS_ENOUGH),
         "is_blocking": blocking,
@@ -67,29 +69,32 @@ def build_evidence(customer: dict, accounts: list[dict], transactions: list[dict
     months = max(_history_months(transactions), 1)
     expenses = [t for t in transactions if t.get("transaction_type") == "expense"]
     incomes = [t for t in transactions if t.get("transaction_type") == "income"]
-    by_category: dict[str, float] = {}
+    by_signal: dict[str, float] = {}
     for t in expenses:
-        key = t.get("category") or "uncategorized"
-        by_category[key] = by_category.get(key, 0) + abs(float(t.get("amount") or 0))
+        key = t.get("merchant") or t.get("raw_description") or "unknown"
+        by_signal[str(key)[:80]] = by_signal.get(str(key)[:80], 0) + abs(float(t.get("amount") or 0))
 
     recent = sorted(transactions, key=lambda t: str(t.get("transaction_date", "")), reverse=True)[:25]
     return {
         "declared_salary": customer.get("salary"),
         "connected_banks_ar": [BANK_NAMES_AR.get(b, b) for b in connected_banks],
-        "unlinked_known_banks_ar": [BANK_NAMES_AR[b] for b in KNOWN_BANKS
-                                    if b not in {c.upper() for c in connected_banks}],
         "history_months": months,
         "transactions_count": len(transactions),
         "avg_monthly_income_visible": round(sum(float(t.get("amount") or 0) for t in incomes) / months),
         "avg_monthly_expense_visible": round(sum(abs(float(t.get("amount") or 0)) for t in expenses) / months),
-        "monthly_expense_by_category": {k: round(v / months) for k, v in sorted(by_category.items())},
+        "top_expense_signals": [
+            {"merchant_or_description": key, "avg_monthly_amount": round(value / months)}
+            for key, value in sorted(by_signal.items(), key=lambda item: -item[1])[:12]
+        ],
         "visible_loans_count": len(loans),
         "visible_loan_installments": round(sum(float(l.get("monthly_installment") or 0) for l in loans)),
         "total_visible_balance": round(sum(float(a.get("balance") or 0) for a in accounts)),
         "recent_transactions_sample": [
             {"date": str(t.get("transaction_date", ""))[:10],
              "amount": t.get("amount"),
-             "desc": t.get("raw_description") or ""}
+             "merchant": t.get("merchant"),
+             "description": t.get("raw_description") or "",
+             "channel": t.get("channel")}
             for t in recent
         ],
     }

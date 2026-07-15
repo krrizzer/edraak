@@ -45,7 +45,7 @@ ThemeData buildTheme() {
       displayColor: AppColors.textPrimary,
     ),
     cardColor: AppColors.surface,
-    dialogBackgroundColor: AppColors.surface,
+    dialogTheme: const DialogThemeData(backgroundColor: AppColors.surface),
   );
 }
 
@@ -66,11 +66,13 @@ class AppBackground extends StatelessWidget {
       ),
       child: Stack(children: [
         Positioned(
-          top: -140, right: -100,
+          top: -140,
+          right: -100,
           child: _glow(const Color(0x282EE6A8), 340),
         ),
         Positioned(
-          bottom: -160, left: -120,
+          bottom: -160,
+          left: -120,
           child: _glow(const Color(0x1F4EA8FF), 380),
         ),
         child,
@@ -84,19 +86,22 @@ class AppBackground extends StatelessWidget {
           width: size,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            gradient: RadialGradient(colors: [color, color.withOpacity(0)]),
+            gradient:
+                RadialGradient(colors: [color, color.withValues(alpha: 0)]),
           ),
         ),
       );
 }
 
 /// Glass card: translucent fill + hairline border + deep shadow.
-BoxDecoration cardDecoration({Color? color, Color? borderColor}) => BoxDecoration(
-      color: color ?? Colors.white.withOpacity(0.045),
+BoxDecoration cardDecoration({Color? color, Color? borderColor}) =>
+    BoxDecoration(
+      color: color ?? Colors.white.withValues(alpha: 0.045),
       borderRadius: BorderRadius.circular(22),
       border: Border.all(color: borderColor ?? AppColors.border),
       boxShadow: const [
-        BoxShadow(color: Color(0x40000000), blurRadius: 28, offset: Offset(0, 14)),
+        BoxShadow(
+            color: Color(0x40000000), blurRadius: 28, offset: Offset(0, 14)),
       ],
     );
 
@@ -105,12 +110,18 @@ BoxDecoration heroDecoration(Color color) => BoxDecoration(
       gradient: LinearGradient(
         begin: Alignment.topRight,
         end: Alignment.bottomLeft,
-        colors: [color.withOpacity(0.16), Colors.white.withOpacity(0.03)],
+        colors: [
+          color.withValues(alpha: 0.16),
+          Colors.white.withValues(alpha: 0.03)
+        ],
       ),
       borderRadius: BorderRadius.circular(24),
-      border: Border.all(color: color.withOpacity(0.55), width: 1.2),
+      border: Border.all(color: color.withValues(alpha: 0.55), width: 1.2),
       boxShadow: [
-        BoxShadow(color: color.withOpacity(0.18), blurRadius: 36, offset: const Offset(0, 10)),
+        BoxShadow(
+            color: color.withValues(alpha: 0.18),
+            blurRadius: 36,
+            offset: const Offset(0, 10)),
       ],
     );
 

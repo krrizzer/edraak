@@ -18,6 +18,18 @@ from app.agents.schemas import SufficiencyOutput
 
 logger = logging.getLogger("edraak.agents.data_sufficiency")
 
+_BANK_ALIASES = {
+    "مصرف الإنماء": ("مصرف الإنماء", "الإنماء"),
+    "مصرف الراجحي": ("مصرف الراجحي", "الراجحي"),
+    "البنك الأهلي السعودي": ("البنك الأهلي السعودي", "البنك الأهلي", "الأهلي"),
+    "بنك الرياض": ("بنك الرياض",),
+    "البنك السعودي الأول": ("البنك السعودي الأول", "ساب"),
+}
+_UNVERIFIED_BANK_FINDING = (
+    "قد تكون بعض مصادر الدخل أو النفقات خارج الحسابات المرتبطة؛ "
+    "لا يمكن تحديد البنك قبل موافقتك على الربط."
+)
+
 INSTRUCTION = """
 You are the Edraak Data Sufficiency Agent.
 You receive aggregate facts and a sample of recent transactions from the bank
@@ -40,6 +52,9 @@ Do:
 - If the picture genuinely looks complete, say so in one reassuring finding.
 Do not:
 - Do not invent numbers, banks, or transactions.
+- Never name or imply a specific unlinked bank. The evidence cannot establish
+  that the customer owns an account at Al Rajhi, SNB, Riyad Bank, SAB, or any
+  other institution before consent. Say "بنك آخر" or "حساب آخر" only.
 - Do not repeat generic advice; tie every finding to the supplied evidence.
 - Do not treat small noise accounts as meaningful gaps.
 """
@@ -48,7 +63,25 @@ Do not:
 def assess(evidence: dict) -> SufficiencyOutput:
     """Run the sufficiency judgment over the deterministic evidence payload."""
     output = run_gemini_agent("data_sufficiency", evidence, SufficiencyOutput, INSTRUCTION)
+    output.findings_ar = _guard_unverified_bank_claims(
+        output.findings_ar, evidence.get("connected_banks_ar", [])
+    )
     audit_numbers("data_sufficiency", output.findings_ar, evidence)
     logger.info("flow.agent.data_sufficiency.completed looks_complete=%s confidence=%s findings=%s",
                 output.looks_complete, output.confidence, len(output.findings_ar))
     return output
+
+
+def _guard_unverified_bank_claims(findings: list[str], connected_banks_ar: list[str]) -> list[str]:
+    """Replace any guessed unlinked-bank identity with an explicit uncertainty statement."""
+    connected = set(connected_banks_ar)
+    guarded = []
+    for finding in findings:
+        named_unlinked_bank = any(
+            bank not in connected and any(alias in finding for alias in aliases)
+            for bank, aliases in _BANK_ALIASES.items()
+        )
+        safe_finding = _UNVERIFIED_BANK_FINDING if named_unlinked_bank else finding
+        if safe_finding not in guarded:
+            guarded.append(safe_finding)
+    return guarded

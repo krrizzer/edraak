@@ -1,0 +1,17 @@
+.gcloudignore
+.git
+.gitignore
+.pytest_cache
+**/__pycache__/**
+**/*.pyc
+.env
+.venv
+venv
+tests
+app/static
+app/functions/models/*.joblib
+ui/.dart_tool
+ui/.vscode
+ui/build
+ui/.flutter-plugins
+ui/.flutter-plugins-dependencies

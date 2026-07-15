@@ -59,6 +59,3 @@ ss.txt
 **/.flutter-plugins-dependencies
 **/*.g.dart
 cloud-run/edrak/ui/.packages
-
-# Mock gateway local consent store
-cloud-run/mock-bank/consents_store.json

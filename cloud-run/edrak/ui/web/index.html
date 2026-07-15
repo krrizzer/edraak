@@ -6,11 +6,23 @@
   <meta name="description" content="إدراك — حزام الأمان المالي عبر البنوك">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#06121a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="format-detection" content="telephone=no">
   <title>إدراك</title>
   <base href="$FLUTTER_BASE_HREF">
   <link rel="manifest" href="manifest.json">
   <style>
-    body { background-color: #06121a; margin: 0; }
+    html, body {
+      background-color: #06121a;
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
     #loading {
       position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
       color: #37d6a6; font-family: Tahoma, Arial, sans-serif; font-size: 20px; font-weight: 700;

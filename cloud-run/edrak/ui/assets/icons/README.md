@@ -5,7 +5,8 @@ Use square PNGs (transparent background looks best).
 
 | File | Used as |
 |---|---|
-| `Amad.png` | The Edraak app logo (login screen, home header, PWA icon) |
+| `EDRAAK.png` | The Edraak app logo (login screen, home header, PWA icon) |
+| `AMAD.png` | The AMAD hackathon logo shown in the small home-screen footer |
 | `ALINMA.png` | مصرف الإنماء logo (host bank row, bank panels) |
 | `ALRAJHI.png` | مصرف الراجحي logo |
 | `SNB.png` | البنك الأهلي السعودي logo |

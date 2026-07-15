@@ -3,7 +3,8 @@ import 'package:intl/intl.dart';
 final _sar = NumberFormat('#,##0', 'en_US');
 
 /// Format a number as Saudi riyals.
-String sar(num? value) => value == null ? '-' : '${_sar.format(value.round())} ر.س';
+String sar(num? value) =>
+    value == null ? '-' : '${_sar.format(value.round())} ر.س';
 
 /// The customer's host bank — Edraak runs inside this bank's world, so it is
 /// always connected and never needs linking.

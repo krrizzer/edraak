@@ -4,10 +4,11 @@ Showing deterministic steps in the trace is a feature — the auditability pitch
 """
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from app.agents.decision_advisor import advise
 from app.agents.intervention import intervene
-from app.agents.transaction_intelligence import detect_obligations
+from app.agents.transaction_intelligence import classify_transactions, detect_obligations
 from app.data.bigquery_client import (
     get_accounts,
     get_customer_by_id,
@@ -18,7 +19,7 @@ from app.data.bigquery_client import (
 )
 from app.functions.forecast_engine import build_forecast
 from app.functions.profile_builder import build_user_profile
-from app.functions.radar import run_radar
+from app.functions.radar import render_radar_message, render_radar_title, run_radar
 from app.functions.risk_model import predict_risk
 from app.functions.validator import validate_inputs
 from app.functions.verdict_rules import VERDICT_AVOID, decide_verdict
@@ -116,10 +117,30 @@ def run_radar_check(customer_id: str) -> dict:
     trace = _Trace()
     customer, accounts, transactions, loans = _load_sources(customer_id)
 
-    obligations, _, _ = detect_obligations(customer_id, transactions)
+    # Obligation detection and raw-narrative classification are independent.
+    # Running them together avoids two sequential agent waits on a cold demo.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        obligations_future = executor.submit(detect_obligations, customer_id, transactions)
+        categories_future = executor.submit(classify_transactions, customer_id, transactions)
+        obligations, _, obligations_cached = obligations_future.result()
+        transaction_categories, category_warnings, categories_cached = categories_future.result()
     profile = build_user_profile(customer, accounts, transactions, loans, obligations)
 
-    detection = run_radar(profile, accounts, transactions, loans, obligations)
+    trace.add(
+        "transaction_categorization",
+        "llm",
+        "تصنيف الإنفاق من اسم التاجر ووصف المعاملة وقناة الدفع، دون الاعتماد على فئة مصرفية جاهزة."
+        + (" (من الذاكرة المؤقتة)" if categories_cached else ""),
+    )
+    trace.add(
+        "recurrence_detector",
+        "llm",
+        "اكتشاف الالتزامات المتكررة من أوصاف المعاملات الخام."
+        + (" (من الذاكرة المؤقتة)" if obligations_cached else ""),
+    )
+    detection = run_radar(
+        profile, accounts, transactions, loans, obligations, transaction_categories
+    )
     trace.add("radar_detector", "deterministic",
               "مقارنة وتيرة الصرف الحالية بخط الأساس وإسقاط رصيد نهاية الشهر.")
     logger.info("flow.radar.completed customer_id=%s has_gap=%s gap=%s",
@@ -131,6 +152,7 @@ def run_radar_check(customer_id: str) -> dict:
     }
     alert_text = intervene(intervention_payload)
     trace.add("intervention_agent", "llm", alert_text.trace_message_ar)
+    message_ar = render_radar_message(detection, alert_text.guidance_ar)
 
     alert_id = None
     if detection["alert_type"] != "on_track":
@@ -140,7 +162,7 @@ def run_radar_check(customer_id: str) -> dict:
             "gap_amount": detection["gap_amount"],
             "gap_date": detection["gap_date"],
             "cause_category": (detection["cause_category"] or {}).get("category"),
-            "message_ar": alert_text.message_ar,
+            "message_ar": message_ar,
             "trajectory_json": _json(detection["trajectory"]),
         })
 
@@ -152,8 +174,9 @@ def run_radar_check(customer_id: str) -> dict:
         "gap_date": detection["gap_date"],
         "cause_category": detection["cause_category"],
         "trajectory": detection["trajectory"],
-        "title_ar": alert_text.title_ar,
-        "message_ar": alert_text.message_ar,
+        "title_ar": render_radar_title(detection),
+        "message_ar": message_ar,
+        "classification_warnings_ar": category_warnings,
         "alert_id": alert_id,
         "step_trace": trace.steps,
     }

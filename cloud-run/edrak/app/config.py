@@ -42,6 +42,9 @@ def bq_table(name: str) -> str:
         "loans": _env("BQ_LOANS_TABLE", "loans"),
         "user_profiles": _env("BQ_USER_PROFILES_TABLE", "user_profiles"),
         "detected_obligations": _env("BQ_DETECTED_OBLIGATIONS_TABLE", "detected_obligations"),
+        "transaction_classifications": _env(
+            "BQ_TRANSACTION_CLASSIFICATIONS_TABLE", "transaction_classifications"
+        ),
         "alerts": _env("BQ_ALERTS_TABLE", "alerts"),
         "ob_consents": _env("BQ_OB_CONSENTS_TABLE", "ob_consents"),
         "ob_raw_payloads": _env("BQ_OB_RAW_PAYLOADS_TABLE", "ob_raw_payloads"),
@@ -74,6 +77,11 @@ def gemini_model() -> str:
 def openbanking_gateway_url() -> str:
     """Base URL of the mock SAMA Open Banking gateway service (separate Cloud Run app)."""
     return _env("OPENBANKING_GATEWAY_URL", "http://localhost:8081").rstrip("/")
+
+
+def demo_reset_token() -> str:
+    """Shared backend-to-gateway token for the hidden demo reset endpoint."""
+    return _env("DEMO_RESET_TOKEN", "edraak-demo-reset")
 
 
 def risk_model_path() -> Path:

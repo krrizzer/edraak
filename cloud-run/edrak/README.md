@@ -20,6 +20,7 @@ a number.
 ```text
 login
 -> load customers, accounts, transactions, loans across all banks
+-> data sufficiency            (LLM, advisory preflight; deterministic fallback)
 -> validator                  (deterministic)
 -> transaction intelligence   (LLM, or fresh detected_obligations cache)
 -> profile builder            (deterministic, cross-bank aggregates)
@@ -35,10 +36,11 @@ login
 
 ```text
 radar detector (deterministic):
-  month-to-date pace per category vs trailing 3-month same-day-window baseline
+  AI-derived category pace vs trailing 3-month same-day-window baseline
   projected balance at every upcoming committed payment date this month
   gap -> amount, date, cause category (biggest positive deviation)
--> intervention agent (LLM): ONE short actionable Arabic alert
+-> intervention agent (LLM): number-free Arabic guidance only
+-> deterministic renderer: exact balance equation + numeric message
 -> store in alerts (storage only) and return with the trajectory numbers
 ```
 
@@ -72,6 +74,7 @@ app/
     gemini_client.py       # Vertex AI calls + strict schema validation + number audit
     schemas.py             # all Pydantic response schemas
     transaction_intelligence.py
+    data_sufficiency.py
     decision_advisor.py
     intervention.py
 ui/                        # Flutter web app (Arabic, RTL): login, link banks, chart, radar
@@ -80,16 +83,17 @@ tests/                     # forecast/verdict/radar/recurrence/validator unit te
 
 ## Data Rules
 
-- Source tables: `customers`, `accounts`, `transactions` (with the messy
-  `raw_description` the agent reads), `loans` (with `remaining_months`).
+- Source tables: `customers`, `accounts`, `transactions` (merchant,
+  `raw_description`, channel — deliberately no category), `loans` (with
+  `remaining_months`).
 - Derived: `user_profiles` (cross-bank aggregates), `detected_obligations`
   (cache of agent output, reused while fresh — see
-  `OBLIGATION_CACHE_MAX_AGE_HOURS`).
+  `OBLIGATION_CACHE_MAX_AGE_HOURS`), and `transaction_classifications` (AI labels
+  inferred from the raw transaction signals).
 - Storage-only, never read by agents: `decision_requests`, `recommendations`,
   `alerts`.
-- The Transaction Intelligence Agent must cite supporting transaction ids;
-  Python recomputes amount/day/banks from those rows and replaces any amount
-  off by more than 15%.
+- Deterministic recurrence detection owns amounts, days, and bank codes. The
+  Transaction Intelligence Agent only labels the fixed groups.
 - The Decision Advisor must return `recommendation` equal to the deterministic
   verdict or the request fails with HTTP 502.
 
@@ -112,11 +116,15 @@ flutter pub get
 flutter run -d chrome --dart-define=API_BASE=http://localhost:8080 --dart-define=GATEWAY_BASE=http://localhost:8081
 ```
 
-Seed the demo data (first-party only; dates relative to the run day — reseed near demo day):
+Startup automatically refreshes stale seed data. Manual loading is only a recovery option:
 
 ```bash
 GCP_PROJECT_ID=your-project python -m app.data.seed.load_seed_data
 ```
+
+Startup also ensures additive derived/cache tables exist independently of the
+seed date. Updating the app therefore does not require reseeding merely to add
+`transaction_classifications`.
 
 Tests:
 
@@ -129,10 +137,11 @@ python -m pytest tests/
 
 | user | story | expected outcome |
 |---|---|---|
-| `fahad` | healthy at Al Rajhi; SNB loan with 2 months left + 3 BNPL stacks + جمعية + family transfer at other banks | Mode A on 2,500/mo car → الأفضل تأجيله, ready in ~2 months |
-| `sara` | strong salary, one car loan, no BNPL | Mode A → قرار آمن |
-| `khalid` | salary day 1, cafe spending accelerating, 3,100 installment day 27 | Mode B radar → gap ≈ 340 SAR |
-| `noura` | 9,500 salary, rent + loan + 3 BNPL stacks, thin savings | Mode A → غير مناسب |
+| `fahad` | healthy inside Alinma; one Al Rajhi link reveals the consolidated external loan + 3 BNPL stacks + جمعية + family transfer | Mode A on 2,500/mo car → الأفضل تأجيله, ready in ~2 months |
+| `sara` | 22,000 government salary, rent + modest car loan, disciplined spending, 63,000 savings | Mode A → قرار آمن |
+| `khalid` | 14,500 salary, rent + car loan, cafe/restaurant spending accelerating | Mode B radar → gap ≈ 340 SAR |
+| `noura` | 10,200 salary, shared rent + personal loan + BNPL stacks, minimal reserve | Mode A → غير مناسب |
+| `abdullah` | 26,000 salary and strong savings, but mortgage + external car loan + family/nursery commitments | Mode A → acceptable with caution |
 
 Note: the radar demo needs the seed to be loaded before khalid's installment
 day (day 27 of the month); seeding on day 27+ shows the "belt secure" state.
@@ -144,12 +153,17 @@ day (day 27 of the month); seeding on day 27+ shows the "belt secure" state.
 - `POST /api/analyze` — Mode A decision input
 - `POST /api/radar/trigger` — `{"customer_id": "CUST003"}`
 - `GET /api/alerts/{customer_id}`
+- `POST /api/demo/reset` — hidden presentation reset for one demo customer
 
 ## Deploy
 
-```bash
-GCP_PROJECT_ID=your-project ./deploy.sh    # Cloud Run, me-central2 by default
+```powershell
+# From the repository root: provisions and deploys both services in us-central1
+.\deploy-demo.ps1
 ```
+
+During a presentation, long-press the home-screen logo and confirm to revoke
+linked-bank consents and restore that user to the clean Alinma-only state.
 
 ## Environment Variables
 
@@ -159,9 +173,12 @@ USE_BIGQUERY=true
 USE_GEMINI=true
 GCP_PROJECT_ID=
 BQ_DATASET=edraak_finance
+BANK_CORES_DATASET=bank_cores
+AUTO_SEED=true
+OPENBANKING_GATEWAY_URL=
+DEMO_RESET_TOKEN=edraak-demo-reset
 VERTEX_LOCATION=global
 GEMINI_MODEL=gemini-2.5-flash-lite
 RISK_MODEL_PATH=                    # optional; default app/functions/models/risk_model.joblib
 OBLIGATION_CACHE_MAX_AGE_HOURS=24
-VITE_API_BASE_URL=                  # optional UI override
 ```

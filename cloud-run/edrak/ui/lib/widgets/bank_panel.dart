@@ -22,13 +22,15 @@ class BankPanel extends StatelessWidget {
             style: TextStyle(color: AppColors.textMuted, height: 1.7),
           ),
           const SizedBox(height: 14),
-          ...byBank.entries.map((e) => _bankCard(e.key, (e.value as List).cast<Map<String, dynamic>>())),
+          ...byBank.entries.map((e) =>
+              _bankCard(e.key, (e.value as List).cast<Map<String, dynamic>>())),
         ],
       ),
     );
   }
 
-  Widget _bankCard(String bankCode, List<Map<String, dynamic>> items) => Container(
+  Widget _bankCard(String bankCode, List<Map<String, dynamic>> items) =>
+      Container(
         width: double.infinity,
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(14),
@@ -44,7 +46,8 @@ class BankPanel extends StatelessWidget {
               BankLogo(bankCode, size: 30),
               const SizedBox(width: 10),
               Text(bankNamesAr[bankCode] ?? bankCode,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w800)),
             ]),
             const SizedBox(height: 10),
             ...items.map(_obligationRow),
@@ -61,11 +64,15 @@ class BankPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
-            Pill(obligationBadges[item['obligation_type']] ?? '${item['obligation_type']}',
-                color: _typeColor(item['obligation_type'] as String?), solid: true),
+            Pill(
+                obligationBadges[item['obligation_type']] ??
+                    '${item['obligation_type']}',
+                color: _typeColor(item['obligation_type'] as String?),
+                solid: true),
             const Spacer(),
             Text('${sar(item['monthly_amount'])} شهريًا',
-                style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w800)),
+                style: const TextStyle(
+                    color: AppColors.primary, fontWeight: FontWeight.w800)),
           ]),
           const SizedBox(height: 4),
           Text('${item['label_ar'] ?? item['counterparty']}',

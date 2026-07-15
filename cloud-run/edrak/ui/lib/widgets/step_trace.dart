@@ -31,17 +31,20 @@ class StepTrace extends StatelessWidget {
               children: [
                 Row(children: [
                   Pill(isLlm ? 'ذكاء اصطناعي' : 'حتمي',
-                      color: isLlm ? AppColors.ai : AppColors.primary, solid: true),
+                      color: isLlm ? AppColors.ai : AppColors.primary,
+                      solid: true),
                   const Spacer(),
                   Text('${s['elapsed_ms']} م.ث',
-                      style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                      style: const TextStyle(
+                          fontSize: 11, color: AppColors.textMuted)),
                 ]),
                 const SizedBox(height: 8),
                 Text(stepNamesAr[s['step']] ?? '${s['step']}',
                     style: const TextStyle(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 4),
                 Text('${s['message_ar']}',
-                    style: const TextStyle(color: AppColors.textMuted, height: 1.6)),
+                    style: const TextStyle(
+                        color: AppColors.textMuted, height: 1.6)),
               ],
             ),
           );

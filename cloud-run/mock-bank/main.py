@@ -1,14 +1,14 @@
 """Mock SAMA Open Banking gateway — a standalone Cloud Run service that plays the banks.
 
-Runs on its own domain, separate from Edraak. It has NO BigQuery access: the only
-way data crosses to Edraak's warehouse is a consented API pull. That physical
-separation is the whole proof — the consent gate returns 403 without a valid consent.
+Runs on its own domain and uses only the separate ``bank_cores`` BigQuery
+dataset. Data crosses into Edraak's ``edraak_finance`` warehouse only through a
+consented API pull; the consent gate returns 403 without a valid consent.
 
 The JSON shape follows the UK-OBIE style the KSA standard is based on. The licensed
 field-level spec is distributed via SAMA's Open Banking Lab; this is a simulation.
 """
-import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -42,27 +42,9 @@ BANKS = {
 
 TEMPLATES = Path(__file__).parent / "templates"
 
-# Consents held on the BANK side. Persisted to a JSON file so a uvicorn restart
-# or --reload never forgets a consent the customer just approved (that was the
-# cause of 404s mid-flow). Edraak (the TPP) keeps its own copy in BigQuery.
-CONSENTS_FILE = Path(__file__).parent / "consents_store.json"
-
-
-def _load_consents() -> dict[str, dict]:
-    if not CONSENTS_FILE.exists():
-        return {}
-    try:
-        return json.loads(CONSENTS_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        logger.warning("gateway.consents.load_failed message=Starting with an empty consent store")
-        return {}
-
-
-def _save_consents() -> None:
-    CONSENTS_FILE.write_text(json.dumps(_consents, ensure_ascii=False, indent=1), encoding="utf-8")
-
-
-_consents: dict[str, dict] = _load_consents()
+# Consents held on the BANK side are durable append-only versions in
+# bank_cores.consents. Edraak (the TPP) keeps its own record separately.
+DEMO_RESET_TOKEN = os.getenv("DEMO_RESET_TOKEN", "edraak-demo-reset")
 
 app = FastAPI(
     title="SAMA Open Banking Mock — KSAOB v1",
@@ -81,10 +63,20 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def prepare_runtime_schema():
+    """Keep local runs compatible with additive gateway schema updates."""
+    bank_cores.ensure_runtime_tables()
+
+
 class ConsentRequest(BaseModel):
     customer_id: str
     permissions: list[str] = DEFAULT_PERMISSIONS
     redirect_uri: str | None = None
+
+
+class DemoResetRequest(BaseModel):
+    customer_id: str
 
 
 @app.get("/", response_class=HTMLResponse, tags=["Info"])
@@ -113,7 +105,7 @@ def create_consent(bank_code: str, body: ConsentRequest):
     _require_bank(bank_code)
     now = datetime.now(timezone.utc)
     consent_id = f"CONS-{uuid4().hex[:10].upper()}"
-    _consents[consent_id] = {
+    consent = {
         "consent_id": consent_id,
         "customer_id": body.customer_id,
         "bank_code": bank_code.upper(),
@@ -123,7 +115,7 @@ def create_consent(bank_code: str, body: ConsentRequest):
         "expires_at": (now + timedelta(days=CONSENT_TTL_DAYS)).isoformat(),
         "redirect_uri": body.redirect_uri,
     }
-    _save_consents()
+    bank_cores.save_consent(consent)
     logger.info("flow.gateway.consent.created bank=%s customer_id=%s consent_id=%s status=AwaitingAuthorisation",
                 bank_code, body.customer_id, consent_id)
     return {
@@ -131,7 +123,7 @@ def create_consent(bank_code: str, body: ConsentRequest):
             "ConsentId": consent_id,
             "Status": "AwaitingAuthorisation",
             "Permissions": body.permissions,
-            "ExpirationDateTime": _consents[consent_id]["expires_at"],
+            "ExpirationDateTime": consent["expires_at"],
             "AuthorizeUrl": f"/{bank_code.upper()}/authorize?consent_id={consent_id}",
         }
     }
@@ -141,7 +133,7 @@ def create_consent(bank_code: str, body: ConsentRequest):
 def authorize_page(bank_code: str, consent_id: str):
     """The BANK's own approval screen — the redirect target where the customer taps السماح."""
     bank = _require_bank(bank_code)
-    consent = _consents.get(consent_id)
+    consent = bank_cores.get_consent(consent_id)
     if not consent or consent["bank_code"] != bank_code.upper():
         raise HTTPException(status_code=404, detail=_error("U404", "Unknown ConsentId for this bank."))
     template = (TEMPLATES / "authorize.html").read_text(encoding="utf-8")
@@ -159,11 +151,11 @@ def authorize_page(bank_code: str, consent_id: str):
 def authorize_submit(bank_code: str, consent_id: str = Form(...), decision: str = Form(...)):
     """Handle السماح / رفض, then redirect back to Edraak with the result."""
     _require_bank(bank_code)
-    consent = _consents.get(consent_id)
+    consent = bank_cores.get_consent(consent_id)
     if not consent or consent["bank_code"] != bank_code.upper():
         raise HTTPException(status_code=404, detail=_error("U404", "Unknown ConsentId for this bank."))
     consent["status"] = "Authorised" if decision == "allow" else "Rejected"
-    _save_consents()
+    bank_cores.save_consent(consent)
     logger.info("flow.gateway.consent.decided bank=%s consent_id=%s status=%s", bank_code, consent_id, consent["status"])
     redirect = consent.get("redirect_uri")
     if redirect:
@@ -178,20 +170,31 @@ def authorize_submit(bank_code: str, consent_id: str = Form(...), decision: str 
     body = ("تمت مشاركة بياناتك مع إدراك. يمكنك إغلاق هذه الصفحة والعودة إلى التطبيق."
             if approved else "لم تتم مشاركة أي بيانات. يمكنك إغلاق هذه الصفحة.")
     color = "#37d6a6" if approved else "#f0736a"
+    auto_close = """
+      <script>
+        if (window.opener) {
+          window.setTimeout(() => window.close(), 1200);
+        }
+      </script>
+    """ if approved else ""
     return HTMLResponse(f"""
     <html dir="rtl" lang="ar"><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title>
     <style>body{{font-family:Tahoma,Arial;background:#0a1622;color:#e9f1f8;height:100vh;margin:0;
     display:grid;place-items:center;text-align:center;padding:24px}}
-    .c{{max-width:380px}} h1{{color:{color};font-size:26px}} p{{color:#a9c2d6;line-height:1.9}}</style></head>
-    <body><div class="c"><h1>{title}</h1><p>{body}</p></div></body></html>
+    .c{{max-width:380px}} h1{{color:{color};font-size:26px}} p{{color:#a9c2d6;line-height:1.9}}
+    button{{margin-top:20px;padding:13px 22px;border:0;border-radius:12px;background:{color};
+    color:#03140d;font-size:16px;font-weight:800;cursor:pointer}}</style></head>
+    <body><div class="c"><h1>{title}</h1><p>{body}</p>
+    <button type="button" onclick="window.close()">العودة إلى إدراك</button></div>
+    {auto_close}</body></html>
     """)
 
 
 @app.get("/{bank_code}/open-banking/v1/consents/{consent_id}", tags=["Consents"])
 def get_consent(bank_code: str, consent_id: str):
     """Read one consent's status — lets Edraak poll until the customer approves."""
-    consent = _consents.get(consent_id)
+    consent = bank_cores.get_consent(consent_id)
     if not consent or consent["bank_code"] != bank_code.upper():
         raise HTTPException(status_code=404, detail=_error("U404", "Unknown ConsentId for this bank."))
     return {"Data": {
@@ -205,11 +208,11 @@ def get_consent(bank_code: str, consent_id: str):
 @app.delete("/{bank_code}/open-banking/v1/consents/{consent_id}", tags=["Consents"])
 def revoke_consent(bank_code: str, consent_id: str):
     """Revoke a consent — after this, data calls return 403 again (a live proof moment)."""
-    consent = _consents.get(consent_id)
+    consent = bank_cores.get_consent(consent_id)
     if not consent or consent["bank_code"] != bank_code.upper():
         raise HTTPException(status_code=404, detail=_error("U404", "Unknown ConsentId for this bank."))
     consent["status"] = "Revoked"
-    _save_consents()
+    bank_cores.save_consent(consent)
     logger.info("flow.gateway.consent.revoked bank=%s consent_id=%s", bank_code, consent_id)
     return {"Data": {"ConsentId": consent_id, "Status": "Revoked"}}
 
@@ -274,6 +277,25 @@ def core_stats(bank_code: str):
     return stats or {"bank_code": bank_code.upper(), "accounts": 0, "transactions": 0}
 
 
+@app.post("/internal/demo-reset", include_in_schema=False)
+def demo_reset(body: DemoResetRequest, x_demo_reset_token: str | None = Header(None)):
+    """Backend-only presentation control: revoke a customer's bank-side consents."""
+    if x_demo_reset_token != DEMO_RESET_TOKEN:
+        raise HTTPException(status_code=403, detail=_error("U009", "Invalid demo reset token."))
+    revoked = bank_cores.revoke_customer_consents(body.customer_id)
+    logger.warning("flow.gateway.demo_reset customer_id=%s revoked=%s", body.customer_id, revoked)
+    return {"status": "reset", "customer_id": body.customer_id, "revoked_consents": revoked}
+
+
+@app.post("/internal/core-cache/invalidate", include_in_schema=False)
+def invalidate_core_cache(x_demo_reset_token: str | None = Header(None)):
+    """Backend-only hook called after the synthetic core tables are replaced."""
+    if x_demo_reset_token != DEMO_RESET_TOKEN:
+        raise HTTPException(status_code=403, detail=_error("U009", "Invalid demo reset token."))
+    bank_cores.invalidate_core_cache()
+    return {"status": "invalidated"}
+
+
 def _require_bank(bank_code: str) -> dict:
     if bank_code.upper() not in BANKS:
         raise HTTPException(status_code=404, detail=_error("U404", f"Unknown bank_code {bank_code!r}."))
@@ -286,7 +308,7 @@ def _require_consent(bank_code: str, consent_id: str | None) -> dict:
     if not consent_id:
         raise HTTPException(status_code=401, detail=_error(
             "U001", "Missing x-consent-id header. Create and authorise a consent first."))
-    consent = _consents.get(consent_id)
+    consent = bank_cores.get_consent(consent_id)
     if not consent or consent["bank_code"] != bank_code.upper():
         raise HTTPException(status_code=403, detail=_error(
             "U007", "Consent not valid for this bank. Data moves only after customer consent."))

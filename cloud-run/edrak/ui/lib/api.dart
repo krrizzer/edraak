@@ -45,39 +45,62 @@ class Api {
 
   // ----- Edraak backend -----
 
-  static Future<Map<String, dynamic>> login(String username) =>
-      _post('${ApiConfig.apiBase}/api/login', {'username': username}, 'فشل تسجيل الدخول.');
+  static Future<Map<String, dynamic>> login(String username) => _post(
+      '${ApiConfig.apiBase}/api/login',
+      {'username': username},
+      'فشل تسجيل الدخول.');
 
-  static Future<Map<String, dynamic>> coverage(String customerId) =>
-      _get('${ApiConfig.apiBase}/api/coverage/$customerId', 'تعذر تقييم اكتمال البيانات.');
+  static Future<Map<String, dynamic>> coverage(String customerId) => _get(
+      '${ApiConfig.apiBase}/api/coverage/$customerId',
+      'تعذر تقييم اكتمال البيانات.');
 
   /// The smart pre-analyze check: deterministic logic + the AI sufficiency judgment.
-  static Future<Map<String, dynamic>> coverageDeep(String customerId) =>
-      _get('${ApiConfig.apiBase}/api/coverage/$customerId?deep=true', 'تعذر تقييم اكتمال البيانات.');
+  static Future<Map<String, dynamic>> coverageDeep(String customerId) => _get(
+      '${ApiConfig.apiBase}/api/coverage/$customerId?deep=true',
+      'تعذر تقييم اكتمال البيانات.');
 
-  static Future<List<dynamic>> consents(String customerId) =>
-      _getList('${ApiConfig.apiBase}/api/consents/$customerId', 'تعذر تحميل الحسابات المرتبطة.');
+  static Future<List<dynamic>> consents(String customerId) => _getList(
+      '${ApiConfig.apiBase}/api/consents/$customerId',
+      'تعذر تحميل الحسابات المرتبطة.');
 
-  static Future<Map<String, dynamic>> ingest(String customerId, String bankCode, String consentId) =>
-      _post('${ApiConfig.apiBase}/api/ingest',
-          {'customer_id': customerId, 'bank_code': bankCode, 'consent_id': consentId},
+  static Future<Map<String, dynamic>> ingest(
+          String customerId, String bankCode, String consentId) =>
+      _post(
+          '${ApiConfig.apiBase}/api/ingest',
+          {
+            'customer_id': customerId,
+            'bank_code': bankCode,
+            'consent_id': consentId
+          },
           'فشل سحب بيانات البنك.');
 
-  static Future<Map<String, dynamic>> analyze(String customerId, Map<String, dynamic> form) =>
-      _post('${ApiConfig.apiBase}/api/analyze', {'customer_id': customerId, ...form}, 'فشل تحليل القرار.');
+  static Future<Map<String, dynamic>> analyze(
+          String customerId, Map<String, dynamic> form) =>
+      _post('${ApiConfig.apiBase}/api/analyze',
+          {'customer_id': customerId, ...form}, 'فشل تحليل القرار.');
 
-  static Future<Map<String, dynamic>> radar(String customerId) =>
-      _post('${ApiConfig.apiBase}/api/radar/trigger', {'customer_id': customerId}, 'فشل فحص الرادار.');
+  static Future<Map<String, dynamic>> radar(String customerId) => _post(
+      '${ApiConfig.apiBase}/api/radar/trigger',
+      {'customer_id': customerId},
+      'فشل فحص الرادار.');
 
-  static Future<List<dynamic>> alerts(String customerId) =>
-      _getList('${ApiConfig.apiBase}/api/alerts/$customerId', 'تعذر تحميل التنبيهات.');
+  static Future<List<dynamic>> alerts(String customerId) => _getList(
+      '${ApiConfig.apiBase}/api/alerts/$customerId', 'تعذر تحميل التنبيهات.');
+
+  static Future<Map<String, dynamic>> demoReset(String customerId) => _post(
+      '${ApiConfig.apiBase}/api/demo/reset',
+      {'customer_id': customerId},
+      'تعذر إعادة ضبط بيانات العرض.');
 
   // ----- KSAOB gateway (separate service, on its own domain) -----
 
   /// Create a consent (AwaitingAuthorisation) and return {ConsentId, AuthorizeUrl}.
-  static Future<Map<String, dynamic>> createConsent(String bankCode, String customerId) async {
-    final doc = await _post('${ApiConfig.gatewayBase}/$bankCode/open-banking/v1/consents',
-        {'customer_id': customerId}, 'تعذر إنشاء طلب الموافقة.');
+  static Future<Map<String, dynamic>> createConsent(
+      String bankCode, String customerId) async {
+    final doc = await _post(
+        '${ApiConfig.gatewayBase}/$bankCode/open-banking/v1/consents',
+        {'customer_id': customerId},
+        'تعذر إنشاء طلب الموافقة.');
     return Map<String, dynamic>.from(doc['Data'] as Map);
   }
 
@@ -87,16 +110,19 @@ class Api {
   /// Poll the gateway for the consent's status (Authorised / Rejected / ...).
   static Future<String> consentStatus(String bankCode, String consentId) async {
     final doc = await _get(
-        '${ApiConfig.gatewayBase}/$bankCode/open-banking/v1/consents/$consentId', 'تعذر التحقق من الموافقة.');
+        '${ApiConfig.gatewayBase}/$bankCode/open-banking/v1/consents/$consentId',
+        'تعذر التحقق من الموافقة.');
     return (doc['Data'] as Map)['Status'] as String;
   }
 
   // ----- helpers -----
 
-  static Future<Map<String, dynamic>> _post(String url, Map<String, dynamic> body, String fallback) async {
+  static Future<Map<String, dynamic>> _post(
+      String url, Map<String, dynamic> body, String fallback) async {
     try {
       final r = await http.post(Uri.parse(url),
-          headers: {'Content-Type': 'application/json'}, body: jsonEncode(body));
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(body));
       return _decode(r, fallback);
     } on ApiException {
       rethrow;
@@ -131,7 +157,8 @@ class Api {
   static Map<String, dynamic> _decode(http.Response r, String fallback) {
     final decoded = r.body.isEmpty ? {} : jsonDecode(utf8.decode(r.bodyBytes));
     if (r.statusCode >= 400) {
-      final detail = decoded is Map ? decoded['detail'] ?? decoded['error'] : null;
+      final detail =
+          decoded is Map ? decoded['detail'] ?? decoded['error'] : null;
       throw ApiException(detail is String ? detail : fallback);
     }
     return Map<String, dynamic>.from(decoded as Map);

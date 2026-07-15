@@ -2,24 +2,27 @@
 set -e
 
 SERVICE_NAME="ksaob-mock-gateway"
-REGION="${REGION:-me-central2}"
+REGION="${REGION:-us-central1}"
 GCP_PROJECT_ID="${GCP_PROJECT_ID:-YOUR_PROJECT_ID}"
 BANK_CORES_DATASET="${BANK_CORES_DATASET:-bank_cores}"
-# The gateway reads its bank cores from BigQuery; run it as the Edraak SA (or any
-# SA with dataViewer on the bank_cores dataset).
-SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-}"
+DEMO_RESET_TOKEN="${DEMO_RESET_TOKEN:-edraak-demo-reset}"
+# Demo choice: gateway and backend share the Edraak runtime SA. The gateway reads
+# bank rows and appends consent state only inside the bank_cores dataset.
+SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-edraak-cloud-run-sa@$GCP_PROJECT_ID.iam.gserviceaccount.com}"
 
-EXTRA_ARGS=""
-if [ -n "$SERVICE_ACCOUNT" ]; then
-  EXTRA_ARGS="--service-account $SERVICE_ACCOUNT"
+if [ "$GCP_PROJECT_ID" = "YOUR_PROJECT_ID" ]; then
+  echo "Set GCP_PROJECT_ID before deploying."
+  exit 1
 fi
 
 gcloud run deploy "$SERVICE_NAME" \
   --source . \
+  --project "$GCP_PROJECT_ID" \
   --region "$REGION" \
+  --service-account "$SERVICE_ACCOUNT" \
+  --max-instances 1 \
   --allow-unauthenticated \
-  --set-env-vars "GCP_PROJECT_ID=$GCP_PROJECT_ID,BANK_CORES_DATASET=$BANK_CORES_DATASET" \
-  $EXTRA_ARGS
+  --set-env-vars "GCP_PROJECT_ID=$GCP_PROJECT_ID,BANK_CORES_DATASET=$BANK_CORES_DATASET,DEMO_RESET_TOKEN=$DEMO_RESET_TOKEN"
 
 echo
 echo "Gateway deployed. Set OPENBANKING_GATEWAY_URL on the edraak-app service to this URL,"

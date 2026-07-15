@@ -1,5 +1,6 @@
 """Financial Radar: deterministic current-month trajectory and gap detection. No LLM here."""
 import logging
+import re
 from calendar import monthrange
 from datetime import date
 
@@ -20,6 +21,9 @@ CATEGORY_LABELS_AR = {
     "misc": "متفرقات",
     "housing": "السكن",
     "bills": "الفواتير",
+    "healthcare": "الصحة",
+    "transfers": "التحويلات",
+    "other": "إنفاق آخر",
     "uncategorized": "غير مصنف",
 }
 
@@ -32,7 +36,9 @@ MIN_BASELINE_FOR_CAUSE = 50
 
 
 def run_radar(profile: dict, accounts: list[dict], transactions: list[dict],
-              loans: list[dict], obligations: list[dict], today: date | None = None) -> dict:
+              loans: list[dict], obligations: list[dict],
+              transaction_categories: dict[str, str] | None = None,
+              today: date | None = None) -> dict:
     """Project the current month against a real budget and detect trouble early.
 
     Two detections, in priority order:
@@ -48,7 +54,8 @@ def run_radar(profile: dict, accounts: list[dict], transactions: list[dict],
     savings_reserve = sum(float(a.get("balance") or 0) for a in accounts
                           if a.get("account_type") == "savings")
     flexible = _flexible_expenses(transactions, obligations, loans)
-    categories = _category_pace(flexible, today)
+    transaction_categories = transaction_categories or {}
+    categories = _category_pace(flexible, transaction_categories, today)
     daily_pace = _daily_pace(flexible, today)
     payments = _upcoming_payments(obligations, loans, today)
     salary_day, salary = _pending_salary(profile, transactions, today)
@@ -68,6 +75,16 @@ def run_radar(profile: dict, accounts: list[dict], transactions: list[dict],
     else:
         alert_type = "on_track"
 
+    days_remaining = monthrange(today.year, today.month)[1] - today.day
+    pending_salary = round(salary)
+    upcoming_commitments = round(sum(p["amount"] for p in payments))
+    # This residual uses the exact same projection as projected_eom. Keeping the
+    # displayed components integral guarantees the visible equation always adds
+    # up, even when daily pace contains fractional halalas.
+    projected_flexible_remaining = (
+        round(spendable) + pending_salary - upcoming_commitments - projected_eom
+    )
+
     trajectory = {
         "as_of": today.isoformat(),
         "balance_now": round(spendable),
@@ -77,6 +94,10 @@ def run_radar(profile: dict, accounts: list[dict], transactions: list[dict],
         "flexible_used_mtd": flexible_used,
         "budget_used_pct": round(flexible_used / flexible_budget * 100) if flexible_budget > 0 else 0,
         "daily_flexible_pace": round(daily_pace),
+        "days_remaining": days_remaining,
+        "pending_salary_amount": pending_salary,
+        "projected_flexible_remaining": projected_flexible_remaining,
+        "upcoming_commitments_total": upcoming_commitments,
         "projected_eom_balance": projected_eom,
         "projected_trough": trough,
         "expected_salary_day": salary_day,
@@ -96,6 +117,42 @@ def run_radar(profile: dict, accounts: list[dict], transactions: list[dict],
         "cause_category": cause if alert_type != "on_track" else None,
         "trajectory": trajectory,
     }
+
+
+def render_radar_message(detection: dict, guidance_ar: str = "") -> str:
+    """Render all financial facts deterministically; AI may add number-free guidance only."""
+    trajectory = detection["trajectory"]
+    current = trajectory["balance_now"]
+    salary = trajectory["pending_salary_amount"]
+    flexible = trajectory["projected_flexible_remaining"]
+    commitments = trajectory["upcoming_commitments_total"]
+    projected = trajectory["projected_eom_balance"]
+    remaining_budget = max(
+        trajectory["flexible_budget"] - trajectory["flexible_used_mtd"], 0
+    )
+    equation = (
+        f"رصيدك القابل للصرف الآن {current:,.0f} ر.س، "
+        f"+ {salary:,.0f} راتب متوقع، "
+        f"- {flexible:,.0f} صرف مرن متوقع، "
+        f"- {commitments:,.0f} التزامات قادمة "
+        f"= {projected:,.0f} ر.س متوقعة في نهاية الشهر. "
+        f"المتبقي من ميزانية الصرف المرن {remaining_budget:,.0f} ر.س."
+    )
+    # Even if the language model ignores its instruction, never let a second,
+    # unaudited number reach the UI beside the deterministic equation.
+    guidance = guidance_ar.strip()
+    if re.search(r"[0-9٠-٩]", guidance):
+        guidance = ""
+    return f"{equation} {guidance}".strip()
+
+
+def render_radar_title(detection: dict) -> str:
+    """Stable titles keep the intervention agent away from financial claims."""
+    return {
+        "installment_gap": "تنبيه على التزام قادم",
+        "overspend": "وتيرة الصرف تحتاج انتباه",
+        "on_track": "أمورك المالية على المسار الصحيح",
+    }[detection["alert_type"]]
 
 
 def _project_month(spendable: float, daily_pace: float, payments: list[dict],
@@ -178,7 +235,8 @@ def _matches_committed(txn: dict, committed: list[dict]) -> bool:
     return False
 
 
-def _category_pace(flexible: list[dict], today: date) -> list[dict]:
+def _category_pace(flexible: list[dict], classifications: dict[str, str],
+                   today: date) -> list[dict]:
     """Month-to-date spend per category vs the same day-window average of 3 prior months."""
     current = today.isoformat()[:7]
     prior = sorted({
@@ -187,9 +245,12 @@ def _category_pace(flexible: list[dict], today: date) -> list[dict]:
     }, reverse=True)[:3]
 
     rows = []
-    for category in sorted({_category(t) for t in flexible}):
-        mtd = _window_total(flexible, category, [current], today.day)
-        baseline = _window_total(flexible, category, prior, today.day) / max(len(prior), 1)
+    for category in sorted({_category(t, classifications) for t in flexible}):
+        mtd = _window_total(flexible, classifications, category, [current], today.day)
+        baseline = (
+            _window_total(flexible, classifications, category, prior, today.day)
+            / max(len(prior), 1)
+        )
         deviation = round((mtd - baseline) / baseline * 100) if baseline > 0 else 0
         rows.append({
             "category": category,
@@ -201,12 +262,13 @@ def _category_pace(flexible: list[dict], today: date) -> list[dict]:
     return sorted(rows, key=lambda r: r["deviation_pct"], reverse=True)
 
 
-def _window_total(flexible: list[dict], category: str, months: list[str], max_day: int) -> float:
+def _window_total(flexible: list[dict], classifications: dict[str, str],
+                  category: str, months: list[str], max_day: int) -> float:
     """Total spend for one category inside the first max_day days of the given months."""
     return sum(
         abs(float(t.get("amount") or 0))
         for t in flexible
-        if _category(t) == category
+        if _category(t, classifications) == category
         and str(t.get("transaction_date", ""))[:7] in months
         and int(str(t["transaction_date"])[8:10]) <= max_day
     )
@@ -294,8 +356,9 @@ def _cause_category(categories: list[dict]) -> dict | None:
     return candidates[0] if candidates else None
 
 
-def _category(txn: dict) -> str:
-    return txn.get("category") or "uncategorized"
+def _category(txn: dict, classifications: dict[str, str]) -> str:
+    """Use only the separate AI-derived label cache, never a source-bank category."""
+    return classifications.get(str(txn.get("transaction_id"))) or "uncategorized"
 
 
 def _loan_day(loan: dict) -> int:

@@ -29,8 +29,8 @@ def build_user_profile(customer: dict, accounts: list[dict], transactions: list[
     ))
     avg_spending = _avg_monthly_spending(transactions, today)
     # DESIGN NOTE: flexible = total average spending minus everything committed.
-    # Deterministic and immune to the unreliable category column; small drift in
-    # variable bills lands in "flexible", which is the conservative direction.
+    # Deterministic and independent of AI categories; small drift in variable
+    # bills lands in "flexible", which is the conservative direction.
     avg_flexible = max(avg_spending - committed_obligations - installments, 0)
 
     salary_days = _salary_days(transactions, salary)

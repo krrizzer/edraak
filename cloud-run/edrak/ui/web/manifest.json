@@ -9,6 +9,10 @@
   "orientation": "portrait-primary",
   "prefer_related_applications": false,
   "icons": [
-    { "src": "icons/Amad.png", "sizes": "512x512", "type": "image/png" }
+    {
+      "src": "assets/assets/icons/EDRAAK.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
   ]
 }

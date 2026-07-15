@@ -7,17 +7,22 @@ class PrimaryButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final bool loading;
   final bool expand;
-  const PrimaryButton(this.label, {super.key, this.onPressed, this.loading = false, this.expand = true});
+  const PrimaryButton(this.label,
+      {super.key, this.onPressed, this.loading = false, this.expand = true});
 
   @override
   Widget build(BuildContext context) {
     final child = loading
         ? const SizedBox(
-            height: 22, width: 22,
-            child: CircularProgressIndicator(strokeWidth: 2.5, color: AppColors.onPrimary))
+            height: 22,
+            width: 22,
+            child: CircularProgressIndicator(
+                strokeWidth: 2.5, color: AppColors.onPrimary))
         : Text(label,
             style: const TextStyle(
-                fontWeight: FontWeight.w900, fontSize: 16, color: AppColors.onPrimary));
+                fontWeight: FontWeight.w900,
+                fontSize: 16,
+                color: AppColors.onPrimary));
     final button = DecoratedBox(
       decoration: BoxDecoration(
         gradient: const LinearGradient(
@@ -25,8 +30,10 @@ class PrimaryButton extends StatelessWidget {
         ),
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
-          BoxShadow(color: AppColors.primary.withOpacity(loading ? 0.10 : 0.30),
-              blurRadius: 22, offset: const Offset(0, 8)),
+          BoxShadow(
+              color: AppColors.primary.withValues(alpha: loading ? 0.10 : 0.30),
+              blurRadius: 22,
+              offset: const Offset(0, 8)),
         ],
       ),
       child: Material(
@@ -57,9 +64,10 @@ class GhostButton extends StatelessWidget {
         onPressed: onPressed,
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.primary,
-          side: BorderSide(color: AppColors.primary.withOpacity(0.55)),
+          side: BorderSide(color: AppColors.primary.withValues(alpha: 0.55)),
           minimumSize: const Size(0, 44),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
         child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
       );
@@ -76,14 +84,16 @@ class SectionCard extends StatelessWidget {
         width: double.infinity,
         margin: const EdgeInsets.only(bottom: 14),
         padding: const EdgeInsets.all(18),
-        decoration: cardDecoration(borderColor: accent?.withOpacity(0.5)),
+        decoration: cardDecoration(borderColor: accent?.withValues(alpha: 0.5)),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (title != null) ...[
-              Text(title!, style: TextStyle(
-                  fontSize: 17, fontWeight: FontWeight.w900,
-                  color: accent ?? AppColors.textPrimary)),
+              Text(title!,
+                  style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                      color: accent ?? AppColors.textPrimary)),
               const SizedBox(height: 12),
             ],
             child,
@@ -104,18 +114,24 @@ class Metric extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.035),
+        color: Colors.white.withValues(alpha: 0.035),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(value, style: TextStyle(
-              fontSize: 19, fontWeight: FontWeight.w900, color: c,
-              shadows: [Shadow(color: c.withOpacity(0.5), blurRadius: 14)])),
+          Text(value,
+              style: TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.w900,
+                  color: c,
+                  shadows: [
+                    Shadow(color: c.withValues(alpha: 0.5), blurRadius: 14)
+                  ])),
           const SizedBox(height: 4),
-          Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
+          Text(label,
+              style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
         ],
       ),
     );
@@ -127,18 +143,21 @@ class Pill extends StatelessWidget {
   final String text;
   final Color color;
   final bool solid;
-  const Pill(this.text, {super.key, this.color = AppColors.primary, this.solid = false});
+  const Pill(this.text,
+      {super.key, this.color = AppColors.primary, this.solid = false});
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
         decoration: BoxDecoration(
-          color: solid ? color : color.withOpacity(0.13),
+          color: solid ? color : color.withValues(alpha: 0.13),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: color.withOpacity(solid ? 1 : 0.45)),
+          border: Border.all(color: color.withValues(alpha: solid ? 1 : 0.45)),
         ),
-        child: Text(text, style: TextStyle(
-            fontSize: 12.5, fontWeight: FontWeight.w800,
-            color: solid ? const Color(0xFF06130D) : color)),
+        child: Text(text,
+            style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w800,
+                color: solid ? const Color(0xFF06130D) : color)),
       );
 }
 
@@ -150,16 +169,20 @@ class AiBadge extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 9),
         decoration: BoxDecoration(
           gradient: LinearGradient(colors: [
-            AppColors.ai.withOpacity(0.25), AppColors.accent.withOpacity(0.2),
+            AppColors.ai.withValues(alpha: 0.25),
+            AppColors.accent.withValues(alpha: 0.2),
           ]),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: AppColors.ai.withOpacity(0.6)),
+          border: Border.all(color: AppColors.ai.withValues(alpha: 0.6)),
         ),
         child: const Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(Icons.auto_awesome, size: 12, color: AppColors.ai),
           SizedBox(width: 4),
           Text('ذكاء اصطناعي',
-              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: AppColors.ai)),
+              style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.ai)),
         ]),
       );
 }
@@ -180,30 +203,42 @@ class LoadingPanel extends StatelessWidget {
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: AppColors.primary.withOpacity(0.12),
+                  color: AppColors.primary.withValues(alpha: 0.12),
                 ),
                 child: const SizedBox(
-                    height: 22, width: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2.6, color: AppColors.primary)),
+                    height: 22,
+                    width: 22,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2.6, color: AppColors.primary)),
               ),
               const SizedBox(width: 12),
-              Expanded(child: Text(title,
-                  style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w900))),
+              Expanded(
+                  child: Text(title,
+                      style: const TextStyle(
+                          fontSize: 16.5, fontWeight: FontWeight.w900))),
             ]),
             const SizedBox(height: 14),
             ...steps.map((s) => Padding(
                   padding: const EdgeInsets.only(bottom: 9),
                   child: Row(children: [
                     Container(
-                      height: 7, width: 7,
+                      height: 7,
+                      width: 7,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: AppColors.primary,
-                        boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.6), blurRadius: 8)],
+                        boxShadow: [
+                          BoxShadow(
+                              color: AppColors.primary.withValues(alpha: 0.6),
+                              blurRadius: 8)
+                        ],
                       ),
                     ),
                     const SizedBox(width: 10),
-                    Expanded(child: Text(s, style: const TextStyle(color: AppColors.textMuted))),
+                    Expanded(
+                        child: Text(s,
+                            style:
+                                const TextStyle(color: AppColors.textMuted))),
                   ]),
                 )),
           ],
@@ -228,13 +263,18 @@ class BulletList extends StatelessWidget {
         children: items
             .map((it) => Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Padding(
-                        padding: const EdgeInsets.only(top: 7),
-                        child: Icon(Icons.circle, size: 6, color: accent ?? AppColors.primary)),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text(it, style: const TextStyle(height: 1.7))),
-                  ]),
+                  child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                            padding: const EdgeInsets.only(top: 7),
+                            child: Icon(Icons.circle,
+                                size: 6, color: accent ?? AppColors.primary)),
+                        const SizedBox(width: 10),
+                        Expanded(
+                            child:
+                                Text(it, style: const TextStyle(height: 1.7))),
+                      ]),
                 ))
             .toList(),
       ),
@@ -253,7 +293,7 @@ class BankLogo extends StatelessWidget {
         height: size,
         width: size,
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.05),
+          color: Colors.white.withValues(alpha: 0.05),
           borderRadius: BorderRadius.circular(size * 0.27),
           border: Border.all(color: AppColors.border),
         ),
@@ -261,8 +301,39 @@ class BankLogo extends StatelessWidget {
         child: Image.asset(
           'assets/icons/$bankCode.png',
           fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) =>
-              Icon(Icons.account_balance, color: AppColors.primary, size: size * 0.5),
+          errorBuilder: (_, __, ___) => Icon(Icons.account_balance,
+              color: AppColors.primary, size: size * 0.5),
+        ),
+      );
+}
+
+/// Small event credit. AMAD.png is intentionally separate from EDRAAK.png so
+/// replacing the hackathon artwork never changes the app's own identity.
+class HackathonFooter extends StatelessWidget {
+  const HackathonFooter({super.key});
+
+  @override
+  Widget build(BuildContext context) => const Padding(
+        padding: EdgeInsets.fromLTRB(12, 8, 12, 4),
+        child: Center(child: HackathonLogo(size: 112)),
+      );
+}
+
+class HackathonLogo extends StatelessWidget {
+  final double size;
+  const HackathonLogo({super.key, this.size = 104});
+
+  @override
+  Widget build(BuildContext context) => SizedBox.square(
+        dimension: size,
+        child: Image.asset(
+          'assets/icons/AMAD.png',
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => Icon(
+            Icons.emoji_events_outlined,
+            size: size * 0.72,
+            color: AppColors.textMuted,
+          ),
         ),
       );
 }

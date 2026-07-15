@@ -7,10 +7,16 @@ day, and bank, the agent can never invent a number — the old amount-echo
 validation is no longer even needed.
 """
 import logging
+import re
 
 from app.agents.gemini_client import run_gemini_agent
-from app.agents.schemas import TransactionIntelligenceOutput
-from app.data.bigquery_client import get_fresh_detected_obligations, save_detected_obligations
+from app.agents.schemas import TransactionCategorizationOutput, TransactionIntelligenceOutput
+from app.data.bigquery_client import (
+    get_fresh_detected_obligations,
+    get_transaction_classifications,
+    save_detected_obligations,
+    save_transaction_classifications,
+)
 from app.functions.recurrence import find_recurring_groups
 
 
@@ -44,6 +50,21 @@ Do not:
 - Do not output amounts, days, or bank codes — those are fixed by the system.
 """
 
+CATEGORY_INSTRUCTION = """
+You are the Edraak Transaction Intelligence Agent classifying raw bank-feed
+patterns. Real banking transactions do NOT provide a trustworthy category.
+For every pattern_id, infer one category only from merchant, raw_description,
+channel, direction, and the repeated examples supplied.
+
+Allowed categories:
+cafes, restaurants, groceries, shopping, entertainment, fuel, transport,
+housing, bills, healthcare, transfers, other.
+
+Do not invent patterns. Return exactly one label for each pattern_id. Use
+`other` only when merchant and narrative genuinely do not support a clearer
+meaning. Confidence is 0-1.
+"""
+
 
 def detect_obligations(customer_id: str, transactions: list[dict],
                        use_cache: bool = True) -> tuple[list[dict], list[str], bool]:
@@ -73,11 +94,95 @@ def detect_obligations(customer_id: str, transactions: list[dict],
     return obligations, warnings, False
 
 
+def classify_transactions(customer_id: str, transactions: list[dict],
+                          use_cache: bool = True) -> tuple[dict[str, str], list[str], bool]:
+    """AI-classify expense meaning from raw bank signals, cached outside source rows."""
+    expenses = [t for t in transactions if t.get("transaction_type") == "expense"]
+    cached = get_transaction_classifications(customer_id) if use_cache else {}
+    categories = {
+        txn_id: row["category"]
+        for txn_id, row in cached.items()
+    }
+    missing = [t for t in expenses if t.get("transaction_id") not in categories]
+    if not missing:
+        return categories, [], True
+
+    patterns, members = _classification_patterns(missing)
+    output = run_gemini_agent(
+        "transaction_categorization",
+        {"customer_id": customer_id, "patterns": patterns},
+        TransactionCategorizationOutput,
+        CATEGORY_INSTRUCTION,
+    )
+    by_id = {label.pattern_id: label for label in output.labels}
+    rows = []
+    warnings = []
+    for pattern in patterns:
+        label = by_id.get(pattern["pattern_id"])
+        if label is None:
+            category, confidence = "other", 0.0
+            warnings.append("تعذر تصنيف بعض أوصاف المعاملات؛ عوملت كإنفاق آخر.")
+        else:
+            category, confidence = label.category, label.confidence
+        for transaction_id in members[pattern["pattern_id"]]:
+            categories[transaction_id] = category
+            rows.append({
+                "transaction_id": transaction_id,
+                "category": category,
+                "confidence": confidence,
+            })
+    save_transaction_classifications(customer_id, rows)
+    logger.info(
+        "flow.agent.transaction_categorization.completed customer_id=%s patterns=%s transactions=%s",
+        customer_id, len(patterns), len(rows),
+    )
+    return categories, warnings, False
+
+
+def _classification_patterns(transactions: list[dict]) -> tuple[list[dict], dict[str, list[str]]]:
+    """Collapse repeated raw narratives so Gemini labels patterns, not hundreds of rows."""
+    grouped: dict[tuple[str, str, str], list[dict]] = {}
+    for txn in transactions:
+        merchant = str(txn.get("merchant") or "").strip()
+        description = str(txn.get("raw_description") or "").strip()
+        channel = str(txn.get("channel") or "").strip()
+        signature = (merchant.casefold(), _normalize_description(description), channel.casefold())
+        grouped.setdefault(signature, []).append(txn)
+
+    patterns = []
+    members: dict[str, list[str]] = {}
+    for index, ((_merchant_key, _description_key, channel), rows) in enumerate(grouped.items(), start=1):
+        pattern_id = f"PAT-{index:03d}"
+        descriptions = list(dict.fromkeys(
+            str(row.get("raw_description") or "") for row in rows
+        ))[:4]
+        merchants = list(dict.fromkeys(
+            str(row.get("merchant") or "") for row in rows if row.get("merchant")
+        ))[:3]
+        patterns.append({
+            "pattern_id": pattern_id,
+            "merchants": merchants,
+            "sample_descriptions": descriptions,
+            "channel": channel,
+            "direction": "debit",
+            "occurrences": len(rows),
+        })
+        members[pattern_id] = [str(row["transaction_id"]) for row in rows]
+    return patterns, members
+
+
+def _normalize_description(value: str) -> str:
+    value = re.sub(r"\d+", "#", value.casefold())
+    return re.sub(r"\s+", " ", value).strip()
+
+
 def _group_view(group: dict) -> dict:
     """The evidence the agent sees for one group: descriptions and stable facts (no amount trust needed)."""
     return {
         "group_id": group["group_id"],
         "sample_descriptions": group["sample_descriptions"],
+        "sample_merchants": group.get("sample_merchants", []),
+        "sample_channels": group.get("sample_channels", []),
         "monthly_amount": group["monthly_amount"],
         "day_of_month": group["day_of_month"],
         "months_seen": group["months_seen"],

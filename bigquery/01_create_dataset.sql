@@ -6,5 +6,10 @@
 
 CREATE SCHEMA IF NOT EXISTS `YOUR_PROJECT_ID.edraak_finance`
 OPTIONS (
-  location = 'me-central2'
+  location = 'us-central1'
+);
+
+CREATE SCHEMA IF NOT EXISTS `YOUR_PROJECT_ID.bank_cores`
+OPTIONS (
+  location = 'us-central1'
 );

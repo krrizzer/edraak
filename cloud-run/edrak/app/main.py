@@ -27,6 +27,7 @@ from app.data.bigquery_client import (
     get_customer_by_username,
     get_loans,
     get_transactions,
+    ensure_runtime_tables,
     save_decision_request,
     save_recommendation,
 )
@@ -65,6 +66,10 @@ class IngestInput(BaseModel):
     consent_id: str
 
 
+class DemoResetInput(BaseModel):
+    customer_id: str
+
+
 app = FastAPI(title="Edraak API", version="0.3.0")
 
 app.add_middleware(
@@ -88,6 +93,15 @@ def warm_risk_model():
 
 
 @app.on_event("startup")
+def prepare_runtime_schema():
+    """Prepare additive support tables even when today's seed is already fresh."""
+    from app import config
+
+    if config.use_bigquery():
+        ensure_runtime_tables()
+
+
+@app.on_event("startup")
 def auto_seed():
     """Re-seed the demo world if it is anchored to a different day (AUTO_SEED=true).
 
@@ -96,13 +110,12 @@ def auto_seed():
     dates anchored to today — no manual load_seed_data run needed.
     """
     from app import config
-    if not config.auto_seed():
+    if not config.auto_seed() or not config.use_bigquery():
         return
-    try:
-        from app.data.seed.load_seed_data import ensure_fresh_seed
-        ensure_fresh_seed()
-    except Exception:
-        logger.warning("flow.seed.auto_failed message=Startup auto-seed failed; continuing with existing data", exc_info=True)
+    from app.data.seed.load_seed_data import ensure_fresh_seed
+    # Fail the container startup if the demo data cannot be prepared. A visible
+    # deployment failure is safer than a healthy-looking app with no login data.
+    ensure_fresh_seed()
 
 
 @app.exception_handler(GeminiAgentError)
@@ -245,6 +258,32 @@ def list_consents(customer_id: str):
     return get_consents(customer_id)
 
 
+@app.post("/api/demo/reset")
+def demo_reset(reset_input: DemoResetInput):
+    """Hidden demo control: revoke bank consents and restore host-bank-only data."""
+    customer_id = reset_input.customer_id
+    if not get_customer_by_id(customer_id):
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    try:
+        revoked = ingestion.reset_gateway_consents(customer_id)
+        from app.data.seed.load_seed_data import reset_demo_customer
+        restored = reset_demo_customer(customer_id)
+    except ingestion.IngestionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Demo customer not found")
+
+    for key in [key for key in _sufficiency_cache if key[0] == customer_id]:
+        _sufficiency_cache.pop(key, None)
+    logger.warning("flow.demo_reset.completed customer_id=%s revoked_consents=%s", customer_id, revoked)
+    return {
+        "status": "reset",
+        "revoked_consents": revoked,
+        "restored": restored,
+    }
+
+
 # One sufficiency judgment per (customer, linked-banks, data volume): re-linking a
 # bank changes the key, so the agent re-runs exactly when the picture changes.
 _sufficiency_cache: dict[tuple, dict] = {}
@@ -295,7 +334,7 @@ def _coverage(customer_id: str, deep: bool = False) -> dict | None:
 
 
 @app.get("/{path:path}")
-def serve_react_app(path: str):
+def serve_flutter_app(path: str):
     requested_file = static_dir / path
     index_file = static_dir / "index.html"
 

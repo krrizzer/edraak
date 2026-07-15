@@ -14,16 +14,27 @@ class ForecastChart extends StatelessWidget {
   Widget build(BuildContext context) {
     final months = (forecast['months'] as List).cast<Map<String, dynamic>>();
     final buffer = [for (final m in months) (m['buffer'] as num).toDouble()];
-    final low = [for (final m in months) ((m['buffer_low'] ?? m['buffer']) as num).toDouble()];
-    final high = [for (final m in months) ((m['buffer_high'] ?? m['buffer']) as num).toDouble()];
-    final maxAbs = [...buffer.map((v) => v.abs()), ...high.map((v) => v.abs()), ...low.map((v) => v.abs())]
-        .fold<double>(1, (a, b) => a > b ? a : b);
-    final hasBand = [for (var i = 0; i < months.length; i++) high[i] != low[i]].contains(true);
+    final low = [
+      for (final m in months)
+        ((m['buffer_low'] ?? m['buffer']) as num).toDouble()
+    ];
+    final high = [
+      for (final m in months)
+        ((m['buffer_high'] ?? m['buffer']) as num).toDouble()
+    ];
+    final maxAbs = [
+      ...buffer.map((v) => v.abs()),
+      ...high.map((v) => v.abs()),
+      ...low.map((v) => v.abs())
+    ].fold<double>(1, (a, b) => a > b ? a : b);
+    final hasBand = [for (var i = 0; i < months.length; i++) high[i] != low[i]]
+        .contains(true);
 
     final released = <String>[];
     for (final m in months) {
       for (final e in (m['events'] as List)) {
-        released.add('الشهر ${m['month']}: ينتهي ${e['label']} ويتحرر ${sar(e['amount'])}');
+        released.add(
+            'الشهر ${m['month']}: ينتهي ${e['label']} ويتحرر ${sar(e['amount'])}');
       }
     }
 
@@ -48,9 +59,12 @@ class ForecastChart extends StatelessWidget {
               ),
               borderData: FlBorderData(show: false),
               titlesData: FlTitlesData(
-                topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                topTitles:
+                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                rightTitles:
+                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                leftTitles:
+                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                 bottomTitles: AxisTitles(
                   sideTitles: SideTitles(
                     showTitles: true,
@@ -58,7 +72,8 @@ class ForecastChart extends StatelessWidget {
                     getTitlesWidget: (v, _) => Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: Text('ش${v.toInt() + 1}',
-                          style: const TextStyle(color: AppColors.textMuted, fontSize: 10.5)),
+                          style: const TextStyle(
+                              color: AppColors.textMuted, fontSize: 10.5)),
                     ),
                   ),
                 ),
@@ -66,7 +81,7 @@ class ForecastChart extends StatelessWidget {
               extraLinesData: ExtraLinesData(horizontalLines: [
                 HorizontalLine(
                   y: 0,
-                  color: AppColors.danger.withOpacity(0.55),
+                  color: AppColors.danger.withValues(alpha: 0.55),
                   strokeWidth: 1.2,
                   dashArray: [6, 5],
                 ),
@@ -79,33 +94,44 @@ class ForecastChart extends StatelessWidget {
                           ? LineTooltipItem(
                               'شهر ${s.x.toInt() + 1}\n${sar(s.y)}',
                               TextStyle(
-                                  color: s.y < 0 ? AppColors.danger : AppColors.primary,
+                                  color: s.y < 0
+                                      ? AppColors.danger
+                                      : AppColors.primary,
                                   fontWeight: FontWeight.w800))
                           : null)
                       .toList(),
                 ),
               ),
               betweenBarsData: hasBand
-                  ? [BetweenBarsData(fromIndex: 1, toIndex: 2,
-                      color: AppColors.primary.withOpacity(0.08))]
+                  ? [
+                      BetweenBarsData(
+                          fromIndex: 1,
+                          toIndex: 2,
+                          color: AppColors.primary.withValues(alpha: 0.08))
+                    ]
                   : [],
               lineBarsData: [
                 // 0: the main buffer curve — gradient stroke, glow, red dots when negative.
                 LineChartBarData(
-                  spots: [for (var i = 0; i < buffer.length; i++) FlSpot(i.toDouble(), buffer[i])],
+                  spots: [
+                    for (var i = 0; i < buffer.length; i++)
+                      FlSpot(i.toDouble(), buffer[i])
+                  ],
                   isCurved: true,
                   curveSmoothness: 0.32,
                   barWidth: 3.4,
                   gradient: const LinearGradient(
                       colors: [Color(0xFF2EE6A8), Color(0xFF4EA8FF)]),
-                  shadow: Shadow(color: AppColors.primary.withOpacity(0.45), blurRadius: 12),
+                  shadow: Shadow(
+                      color: AppColors.primary.withValues(alpha: 0.45),
+                      blurRadius: 12),
                   dotData: FlDotData(
                     show: true,
                     getDotPainter: (spot, _, __, ___) => FlDotCirclePainter(
                       radius: spot.y < 0 ? 5 : 3,
                       color: spot.y < 0 ? AppColors.danger : AppColors.primary,
                       strokeWidth: spot.y < 0 ? 3 : 0,
-                      strokeColor: AppColors.danger.withOpacity(0.35),
+                      strokeColor: AppColors.danger.withValues(alpha: 0.35),
                     ),
                   ),
                   belowBarData: BarAreaData(
@@ -113,7 +139,10 @@ class ForecastChart extends StatelessWidget {
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
-                      colors: [AppColors.primary.withOpacity(0.16), Colors.transparent],
+                      colors: [
+                        AppColors.primary.withValues(alpha: 0.16),
+                        Colors.transparent
+                      ],
                     ),
                   ),
                 ),
@@ -137,11 +166,15 @@ class ForecastChart extends StatelessWidget {
             ),
           const SizedBox(height: 6),
           Wrap(spacing: 8, runSpacing: 8, children: [
-            Pill('الالتزامات الآن: ${forecast['obligation_ratio_now']}%', color: AppColors.accent),
-            Pill('الذروة: ${forecast['obligation_ratio_peak']}%', color: AppColors.accent),
-            Pill('تغطية المدخرات: ${forecast['months_of_savings_cover']} شهر', color: AppColors.accent),
+            Pill('الالتزامات الآن: ${forecast['obligation_ratio_now']}%',
+                color: AppColors.accent),
+            Pill('الذروة: ${forecast['obligation_ratio_peak']}%',
+                color: AppColors.accent),
+            Pill('تغطية المدخرات: ${forecast['months_of_savings_cover']} شهر',
+                color: AppColors.accent),
             if (forecast['first_shortfall_month'] != null)
-              Pill('أول عجز: الشهر ${forecast['first_shortfall_month']} (${sar(forecast['first_shortfall_amount'])})',
+              Pill(
+                  'أول عجز: الشهر ${forecast['first_shortfall_month']} (${sar(forecast['first_shortfall_amount'])})',
                   color: AppColors.danger),
           ]),
         ],
@@ -150,7 +183,10 @@ class ForecastChart extends StatelessWidget {
   }
 
   LineChartBarData _bandLine(List<double> values) => LineChartBarData(
-        spots: [for (var i = 0; i < values.length; i++) FlSpot(i.toDouble(), values[i])],
+        spots: [
+          for (var i = 0; i < values.length; i++)
+            FlSpot(i.toDouble(), values[i])
+        ],
         isCurved: true,
         curveSmoothness: 0.32,
         barWidth: 0,

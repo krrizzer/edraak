@@ -14,12 +14,14 @@ import json
 import logging
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from app import config
 from app.data.bigquery_client import (
     clear_detected_obligations,
+    clear_transaction_classifications,
     get_connected_banks,
     ingest_silver,
     save_consent,
@@ -36,6 +38,28 @@ class IngestionError(RuntimeError):
     pass
 
 
+def reset_gateway_consents(customer_id: str) -> int:
+    """Revoke every bank-side consent for one demo customer."""
+    url = f"{config.openbanking_gateway_url()}/internal/demo-reset"
+    body = json.dumps({"customer_id": customer_id}).encode()
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "x-demo-reset-token": config.demo_reset_token(),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = json.loads(response.read().decode())
+        return int(payload.get("revoked_consents", 0))
+    except Exception as exc:
+        logger.exception("demo_reset.gateway_failed customer_id=%s url=%s", customer_id, url)
+        raise IngestionError("تعذر فصل موافقات البنوك من بوابة العرض.") from exc
+
+
 def ingest_bank(customer_id: str, bank_code: str, consent_id: str) -> dict:
     """Pull accounts + balances + transactions + loans for one bank, land bronze→silver."""
     bank_code = bank_code.upper()
@@ -44,33 +68,64 @@ def ingest_bank(customer_id: str, bank_code: str, consent_id: str) -> dict:
     consent_doc = _assert_authorised(bank_code, consent_id)
     bronze: list[dict] = []
 
-    accounts_doc = _get(bank_code, "/open-banking/v1/accounts", consent_id)
+    # Hide the warehouse round-trip needed for safe re-linking behind the first
+    # gateway pull instead of making the presenter wait for both sequentially.
+    with ThreadPoolExecutor(max_workers=2) as prefetch:
+        connected_future = prefetch.submit(get_connected_banks, customer_id)
+        accounts_future = prefetch.submit(
+            _get, bank_code, "/open-banking/v1/accounts", consent_id
+        )
+        accounts_doc = accounts_future.result()
     bronze.append(_bronze_row(customer_id, bank_code, consent_id, "accounts", None, 1, accounts_doc))
 
-    account_rows, txn_rows = [], []
-    for ob_account in accounts_doc.get("Data", {}).get("Account", []):
+    def pull_account(ob_account: dict) -> tuple[dict, list[dict], list[dict]]:
         account_id = ob_account["AccountId"]
+        account_bronze: list[dict] = []
         balance_doc = _get(bank_code, f"/open-banking/v1/accounts/{account_id}/balances", consent_id)
-        bronze.append(_bronze_row(customer_id, bank_code, consent_id, "balances", account_id, 1, balance_doc))
-        account_rows.append(_silver_account(customer_id, bank_code, ob_account, balance_doc))
-        txn_rows.extend(_pull_transactions(customer_id, bank_code, account_id, consent_id, bronze))
+        account_bronze.append(
+            _bronze_row(customer_id, bank_code, consent_id, "balances", account_id, 1, balance_doc)
+        )
+        transactions = _pull_transactions(
+            customer_id, bank_code, account_id, consent_id, account_bronze
+        )
+        return (
+            _silver_account(customer_id, bank_code, ob_account, balance_doc),
+            transactions,
+            account_bronze,
+        )
 
-    loans_doc = _get(bank_code, "/open-banking/v1/loans", consent_id)
+    ob_accounts = accounts_doc.get("Data", {}).get("Account", [])
+    account_rows, txn_rows = [], []
+    # Al Rajhi intentionally carries all external demo accounts. Pull each
+    # account in parallel, alongside the loans endpoint, to keep the one link fast.
+    with ThreadPoolExecutor(max_workers=max(min(len(ob_accounts) + 1, 8), 1)) as pool:
+        loans_future = pool.submit(_get, bank_code, "/open-banking/v1/loans", consent_id)
+        for account, transactions, account_bronze in pool.map(pull_account, ob_accounts):
+            account_rows.append(account)
+            txn_rows.extend(transactions)
+            bronze.extend(account_bronze)
+        loans_doc = loans_future.result()
     bronze.append(_bronze_row(customer_id, bank_code, consent_id, "loans", None, 1, loans_doc))
     loan_rows = loans_doc.get("Data", {}).get("Loan", [])
 
-    # One batched bronze insert; silver lands via streaming on a first link
-    # (sub-second) and only pays the DELETE dance when re-linking.
-    already_linked = bank_code in get_connected_banks(customer_id)
-    save_raw_payloads(bronze)
-    ingest_silver(customer_id, bank_code, {
+    # BigQuery round-trips dominate this flow, so independent bronze, silver,
+    # cache-invalidation, and consent writes run concurrently.
+    already_linked = bank_code in connected_future.result()
+    silver = {
         "accounts": account_rows,
         "transactions": txn_rows,
         "loans": loan_rows,
-    }, already_linked)
-    # The obligations cache predates this bank's data — force a fresh classification.
-    clear_detected_obligations(customer_id)
-    _record_consent(customer_id, bank_code, consent_id, consent_doc)
+    }
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = [
+            pool.submit(save_raw_payloads, bronze),
+            pool.submit(ingest_silver, customer_id, bank_code, silver, already_linked),
+            pool.submit(clear_detected_obligations, customer_id),
+            pool.submit(clear_transaction_classifications, customer_id),
+            pool.submit(_record_consent, customer_id, bank_code, consent_id, consent_doc),
+        ]
+        for future in futures:
+            future.result()
 
     logger.info("flow.ingest.completed customer_id=%s bank=%s accounts=%s transactions=%s loans=%s",
                 customer_id, bank_code, len(account_rows), len(txn_rows), len(loan_rows))
@@ -158,7 +213,7 @@ def _silver_account(customer_id: str, bank_code: str, ob_account: dict, balance_
 
 
 def _silver_transaction(customer_id: str, bank_code: str, ob_txn: dict) -> dict:
-    """Normalize a KSAOB transaction into our transactions schema (category left blank on purpose)."""
+    """Normalize a KSAOB transaction; meaning is classified later from raw signals."""
     amount = float(ob_txn.get("Amount", {}).get("Amount", 0) or 0)
     is_credit = ob_txn.get("CreditDebitIndicator") == "Credit"
     merchant = (ob_txn.get("MerchantDetails") or {}).get("MerchantName")
@@ -169,7 +224,6 @@ def _silver_transaction(customer_id: str, bank_code: str, ob_txn: dict) -> dict:
         "bank_code": bank_code,
         "transaction_date": str(ob_txn.get("BookingDateTime", ""))[:10],
         "merchant": merchant,
-        "category": None,  # open banking gives no clean category — Edraak's job to infer
         "raw_description": ob_txn.get("TransactionInformation") or "",
         "amount": amount if is_credit else -amount,
         "transaction_type": "income" if is_credit else "expense",

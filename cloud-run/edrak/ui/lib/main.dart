@@ -23,8 +23,12 @@ class EdraakApp extends StatelessWidget {
       // mobile banking app, not a stretched website.
       builder: (context, child) => Directionality(
         textDirection: TextDirection.rtl,
-        child: PhoneFrame(
-          child: AppBackground(child: child ?? const SizedBox.shrink()),
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+          child: PhoneFrame(
+            child: AppBackground(child: child ?? const SizedBox.shrink()),
+          ),
         ),
       ),
       home: const LoginScreen(),
@@ -53,7 +57,10 @@ class PhoneFrame extends StatelessWidget {
               borderRadius: BorderRadius.circular(38),
               border: Border.all(color: const Color(0xFF1E3A4C), width: 6),
               boxShadow: const [
-                BoxShadow(color: Color(0x66000000), blurRadius: 60, offset: Offset(0, 24)),
+                BoxShadow(
+                    color: Color(0x66000000),
+                    blurRadius: 60,
+                    offset: Offset(0, 24)),
               ],
             ),
             child: ClipRRect(
