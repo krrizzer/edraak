@@ -5,8 +5,14 @@ import 'package:google_fonts/google_fonts.dart';
 class AppColors {
   static const bg = Color(0xFF050D15);
   static const bgDeep = Color(0xFF02070D);
+  // Matches the opaque background baked into EDRAAK.png so the mark blends in.
+  static const brandNavy = Color(0xFF001229);
   static const surface = Color(0xFF0C1B27);
   static const surfaceAlt = Color(0xFF122736);
+  static const lightSurface = Color(0xFFF7F8F5);
+  static const lightInk = Color(0xFF10213B);
+  static const lightMuted = Color(0xFF66778B);
+  static const lightBorder = Color(0xFFD7DDE1);
   static const primary = Color(0xFF2EE6A8);
   static const onPrimary = Color(0xFF03140D);
   static const accent = Color(0xFF4EA8FF);
